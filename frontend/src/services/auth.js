@@ -1,51 +1,63 @@
+// 🎩 Don Peppini Contadore - Servicio de Autenticación
 // frontend/src/services/auth.js
-const BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// REEMPLAZAR EL ARCHIVO EXISTENTE
 
-const ACCESS_KEY  = "access_token";
-const REFRESH_KEY = "refresh_token";
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export const authService = {
-  getAccessToken()  { return localStorage.getItem(ACCESS_KEY);  },
-  getRefreshToken() { return localStorage.getItem(REFRESH_KEY); },
-  setTokens({ access, refresh }) {
-    if (access)  localStorage.setItem(ACCESS_KEY,  access);
-    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
-  },
-  clearTokens() {
-    localStorage.removeItem(ACCESS_KEY);
-    localStorage.removeItem(REFRESH_KEY);
-  },
-  isAuthenticated() { return !!localStorage.getItem(ACCESS_KEY); },
-
   async login(username, password) {
-    const res = await fetch(`${BASE}/api/token/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    const response = await fetch(`${API_URL}/api/token/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ username, password }),
     });
-    if (!res.ok) throw new Error("bad-credentials");
-    const data = await res.json(); // { access, refresh }
-    this.setTokens(data);
+
+    if (!response.ok) {
+      throw new Error('Credenciales inválidas');
+    }
+
+    const data = await response.json();
+    localStorage.setItem('access_token', data.access);
+    localStorage.setItem('refresh_token', data.refresh);
     return data;
   },
 
-  async refreshAccessToken() {
-    const refresh = this.getRefreshToken();
-    if (!refresh) throw new Error("no-refresh-token");
-    const res = await fetch(`${BASE}/api/token/refresh/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh }),
-    });
-    if (!res.ok) throw new Error("refresh-failed");
-    const data = await res.json();
-    if (data?.access)  localStorage.setItem(ACCESS_KEY,  data.access);
-    if (data?.refresh) localStorage.setItem(REFRESH_KEY, data.refresh);
-    return data?.access;
+  logout() {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
   },
 
-  logout() {
-    this.clearTokens();
-    window.location.href = "/login";
+  isAuthenticated() {
+    return !!localStorage.getItem('access_token');
+  },
+
+  getToken() {
+    return localStorage.getItem('access_token');
+  },
+
+  async refreshToken() {
+    const refresh = localStorage.getItem('refresh_token');
+    if (!refresh) {
+      throw new Error('No refresh token');
+    }
+
+    const response = await fetch(`${API_URL}/api/token/refresh/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refresh }),
+    });
+
+    if (!response.ok) {
+      this.logout();
+      throw new Error('Token refresh failed');
+    }
+
+    const data = await response.json();
+    localStorage.setItem('access_token', data.access);
+    return data;
   },
 };
