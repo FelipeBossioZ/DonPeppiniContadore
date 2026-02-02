@@ -1,0 +1,65 @@
+# 🎩 Don Peppini Contadore - Git Ignore
+
+# ==================== PYTHON ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+
+# ==================== DJANGO ====================
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# ==================== ARCHIVOS SENSIBLES ====================
+.env
+.env.local
+.env.production
+*.pem
+secrets.json
+
+# ==================== NODE / REACT ====================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build
+dist/
+build/
+.next/
+out/
+
+# ==================== IDEs ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ==================== OS ====================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ==================== TEMPORAL ====================
+*.bak
+*.tmp
+*.temp
+.cache/
