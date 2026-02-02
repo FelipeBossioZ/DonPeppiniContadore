@@ -16,11 +16,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # 🎩 CONFIGURACIÓN DON PEPPINI
 # =============================================================================
 
-# Ruta de la base de datos (puede ser OneDrive para sincronización)
-# Ejemplo OneDrive: "C:/Users/TuUsuario/OneDrive/DonPeppini/db.sqlite3"
-DATABASE_PATH = os.getenv("PEPPINI_DB_PATH", str(BASE_DIR / 'db.sqlite3'))
-
-# PINs para control de periodo (ventana enero-marzo)
 CONTADOR_PIN = os.getenv("CONTADOR_PIN", "8512")
 GERENTE_PIN = os.getenv("GERENTE_PIN", "1010")
 
@@ -29,8 +24,19 @@ GERENTE_PIN = os.getenv("GERENTE_PIN", "1010")
 # =============================================================================
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "donpeppini-2025-clave-secreta-cambiar-en-produccion")
-DEBUG = os.getenv("DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '*']
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+ALLOWED_HOSTS = [
+    'localhost', 
+    '127.0.0.1',
+    '.onrender.com',  # Render
+    '.vercel.app',    # Vercel
+]
+
+# Agregar host personalizado si existe
+RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 # =============================================================================
 # APLICACIONES
@@ -59,6 +65,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # Whitenoise para archivos estáticos
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -91,13 +98,19 @@ WSGI_APPLICATION = "pyme_contable_backend.wsgi.application"
 # BASE DE DATOS
 # =============================================================================
 
-DATABASES = {
-    'default': dj_database_url.config(
-        default=os.getenv('DATABASE_URL'),
-        conn_max_age=600,
-        ssl_require=True,
-    )
-}
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600, ssl_require=True)
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # =============================================================================
 # CONTRASEÑAS
@@ -120,11 +133,13 @@ USE_I18N = True
 USE_TZ = True
 
 # =============================================================================
-# STATIC
+# STATIC FILES
 # =============================================================================
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # =============================================================================
@@ -156,7 +171,7 @@ SIMPLE_JWT = {
 }
 
 # =============================================================================
-# CORS
+# CORS - Producción
 # =============================================================================
 
 CORS_ALLOWED_ORIGINS = [
@@ -165,7 +180,30 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
+# Agregar dominio de Vercel
+FRONTEND_URL = os.getenv('FRONTEND_URL')
+if FRONTEND_URL:
+    CORS_ALLOWED_ORIGINS.append(FRONTEND_URL)
+
+# Permitir cualquier subdominio de vercel.app en producción
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.vercel\.app$",
+]
+
 CORS_ALLOW_CREDENTIALS = True
+
+# =============================================================================
+# SEGURIDAD EN PRODUCCIÓN
+# =============================================================================
+
+if not DEBUG:
+    SECURE_SSL_REDIRECT = False  # Render maneja SSL
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
 
 # =============================================================================
 # LOGGING
