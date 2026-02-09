@@ -116,7 +116,7 @@ export async function createAsiento(asientoData) {
   return data;
 }
 
-export async function anularAsiento({ id, ...payload }) {
+export async function annulAsiento({ id, ...payload }) {
   const { data } = await api.post(`/contabilidad/asientos/${id}/anular/`, payload);
   return data;
 }
