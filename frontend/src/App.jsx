@@ -18,6 +18,7 @@ import ConciliacionBancaria from './pages/ConciliacionBancaria';
 import NotasEEFF from './pages/NotasEEFF';
 import IndicadoresFinancieros from './pages/IndicadoresFinancieros';
 import CierreContable from './pages/CierreContable';
+import Nomina from './pages/Nomina';
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children }) => {
@@ -43,6 +44,7 @@ function App() {
           <Route path="terceros" element={<TercerosPage />} />
           <Route path="contabilidad" element={<Contabilidad />} />
           <Route path="facturacion" element={<Facturacion />} />
+          <Route path="nomina" element={<Nomina />} />
           <Route path="reportes" element={<Reportes />} />
           <Route path="estados-financieros" element={<EstadosFinancieros />} />
           <Route path="medios-magneticos" element={<MediosMagneticos />} />
