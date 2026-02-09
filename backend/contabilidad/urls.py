@@ -9,6 +9,7 @@ from .views import (
     AsientoContableViewSet,
     LibroDiarioView,
     BalancePruebasView,
+    BalancePorTercerosView,
     LibroMayorView,
     EstadoResultadosView,
     BalanceGeneralView,
@@ -57,6 +58,7 @@ urlpatterns = [
     # Reportes básicos
     path('reportes/libro-diario/', LibroDiarioView.as_view(), name='libro-diario'),
     path('reportes/balance-pruebas/', BalancePruebasView.as_view(), name='balance-pruebas'),
+    path('reportes/balance-terceros/', BalancePorTercerosView.as_view(), name='balance-terceros'),
     path('reportes/libro-mayor/<str:cuenta_codigo>/', LibroMayorView.as_view(), name='libro-mayor'),
     path('reportes/estado-resultados/', EstadoResultadosView.as_view(), name='estado-resultados'),
     path('reportes/balance-general/', BalanceGeneralView.as_view(), name='balance-general'),

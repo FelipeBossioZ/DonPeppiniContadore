@@ -19,6 +19,10 @@ import NotasEEFF from './pages/NotasEEFF';
 import IndicadoresFinancieros from './pages/IndicadoresFinancieros';
 import CierreContable from './pages/CierreContable';
 import Nomina from './pages/Nomina';
+import BalanceTerceros from './pages/BalanceTerceros';
+import SimuladorRetencion from './pages/SimuladorRetencion';
+import LiquidacionContrato from './pages/LiquidacionContrato';
+import PrestacionesSociales from './pages/PrestacionesSociales';
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children }) => {
@@ -46,6 +50,10 @@ function App() {
           <Route path="facturacion" element={<Facturacion />} />
           <Route path="nomina" element={<Nomina />} />
           <Route path="reportes" element={<Reportes />} />
+          <Route path="balance-terceros" element={<BalanceTerceros />} />
+          <Route path="simulador-retencion" element={<SimuladorRetencion />} />
+          <Route path="liquidacion-contrato" element={<LiquidacionContrato />} />
+          <Route path="prestaciones" element={<PrestacionesSociales />} />
           <Route path="estados-financieros" element={<EstadosFinancieros />} />
           <Route path="medios-magneticos" element={<MediosMagneticos />} />
           <Route path="certificados" element={<CertificadosTributarios />} />

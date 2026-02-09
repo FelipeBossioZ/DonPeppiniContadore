@@ -4,13 +4,18 @@ from .models import Empresa, ConfiguracionEmpresa
 
 
 class ConfiguracionEmpresaSerializer(serializers.ModelSerializer):
+    has_logo = serializers.SerializerMethodField()
+
     class Meta:
         model = ConfiguracionEmpresa
-        fields = ['pin_contador', 'pin_gerente', 'politicas_contables', 'notas_eeff_plantilla']
+        fields = ['pin_contador', 'pin_gerente', 'politicas_contables', 'notas_eeff_plantilla', 'has_logo']
         extra_kwargs = {
             'pin_contador': {'write_only': True},
             'pin_gerente': {'write_only': True},
         }
+
+    def get_has_logo(self, obj):
+        return bool(obj.logo)
 
 
 class EmpresaListSerializer(serializers.ModelSerializer):

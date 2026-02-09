@@ -120,6 +120,8 @@ class CuentaSerializer(serializers.ModelSerializer):
 # --- Movimientos (ahora con tercero por línea) ---
 class MovimientoContableSerializer(serializers.ModelSerializer):
     cuenta_codigo = serializers.CharField(write_only=True, required=False)
+    cuenta_codigo_display = serializers.CharField(source='cuenta.codigo', read_only=True)
+    cuenta_nombre = serializers.CharField(source='cuenta.nombre', read_only=True)
     tercero = serializers.PrimaryKeyRelatedField(
         queryset=Tercero.objects.all(), required=False, allow_null=True
     )
@@ -128,11 +130,11 @@ class MovimientoContableSerializer(serializers.ModelSerializer):
     class Meta:
         model = MovimientoContable
         fields = [
-            "id", "cuenta", "cuenta_codigo",
+            "id", "cuenta", "cuenta_codigo", "cuenta_codigo_display", "cuenta_nombre",
             "tercero", "tercero_nombre",
             "debito", "credito",
         ]
-        read_only_fields = ["id", "tercero_nombre"]
+        read_only_fields = ["id", "cuenta_codigo_display", "cuenta_nombre", "tercero_nombre"]
         extra_kwargs = {
             "cuenta": {"required": False},
         }
