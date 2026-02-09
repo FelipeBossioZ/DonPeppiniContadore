@@ -66,7 +66,7 @@ class CuentaViewSet(viewsets.ReadOnlyModelViewSet):
     Permite filtrar por el nombre de la cuenta.
     """
     
-    queryset = Cuenta.objects.all().order_by("codigo")
+    queryset = Cuenta.objects.select_related("padre", "empresa").all().order_by("codigo")
     serializer_class = CuentaSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = ["codigo", "nombre"]

@@ -18,7 +18,7 @@ class CuentaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Cuenta
-        fields = ["codigo", "nombre", "padre"]  # no exponemos 'id'
+        fields = ["id", "codigo", "nombre", "padre"]
 
 
 # --- Movimientos ---
