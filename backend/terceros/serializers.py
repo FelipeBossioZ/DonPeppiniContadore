@@ -1,4 +1,4 @@
-# 🎩 Don Peppini Contadore - Serializers de Terceros
+# 🎩 Don Peppini Contadore - Serializers de Terceros (GLOBALES)
 from rest_framework import serializers
 from .models import Tercero
 
@@ -8,7 +8,7 @@ class TerceroListSerializer(serializers.ModelSerializer):
     nombre = serializers.CharField(source="nombre_razon_social", read_only=True)
     documento_completo = serializers.ReadOnlyField()
     nombre_completo = serializers.ReadOnlyField()
-    
+
     class Meta:
         model = Tercero
         fields = [
@@ -30,14 +30,11 @@ class TerceroDetailSerializer(serializers.ModelSerializer):
     nombre = serializers.CharField(source="nombre_razon_social", read_only=True)
     documento_completo = serializers.ReadOnlyField()
     nombre_completo = serializers.ReadOnlyField()
-    empresa_nombre = serializers.CharField(source='empresa.razon_social', read_only=True)
-    
+
     class Meta:
         model = Tercero
         fields = [
             'id',
-            'empresa',
-            'empresa_nombre',
             'tipo_documento',
             'numero_documento',
             'digito_verificacion',
@@ -66,12 +63,11 @@ class TerceroDetailSerializer(serializers.ModelSerializer):
 
 
 class TerceroCreateSerializer(serializers.ModelSerializer):
-    """Serializer para crear terceros"""
-    
+    """Serializer para crear terceros - SIN campo empresa (globales)"""
+
     class Meta:
         model = Tercero
         fields = [
-            'empresa',
             'tipo_documento',
             'numero_documento',
             'digito_verificacion',
@@ -90,18 +86,18 @@ class TerceroCreateSerializer(serializers.ModelSerializer):
             'telefono',
             'email',
         ]
-    
-    def validate(self, data):
-        """Validar que el documento sea único por empresa"""
-        empresa = data.get('empresa')
-        numero_documento = data.get('numero_documento')
-        
-        if Tercero.objects.filter(empresa=empresa, numero_documento=numero_documento).exists():
-            raise serializers.ValidationError({
-                'numero_documento': 'Ya existe un tercero con este documento en la empresa.'
-            })
-        
-        return data
+
+    def validate_numero_documento(self, value):
+        """Validar que el documento sea único globalmente"""
+        instance = getattr(self, 'instance', None)
+        qs = Tercero.objects.filter(numero_documento=value)
+        if instance:
+            qs = qs.exclude(pk=instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                'Ya existe un tercero con este número de documento.'
+            )
+        return value
 
 
 # Alias para compatibilidad
