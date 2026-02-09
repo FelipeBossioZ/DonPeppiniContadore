@@ -26,9 +26,7 @@ class TerceroViewSet(viewsets.ModelViewSet):
     ordering = ['nombre_razon_social']
 
     def get_serializer_class(self):
-        if self.action == 'list':
-            return TerceroListSerializer
-        elif self.action == 'create':
+        if self.action == 'create':
             return TerceroCreateSerializer
         return TerceroDetailSerializer
 

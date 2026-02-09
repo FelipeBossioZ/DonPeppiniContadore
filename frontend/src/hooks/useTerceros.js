@@ -6,24 +6,13 @@ const key = (filters) => ["terceros", filters];
 
 const normalize = (data) => {
   const arr = Array.isArray(data) ? data : (data?.results ?? []);
-  return arr.map(t => {
-    // Tomamos el nombre desde la primera llave disponible
-    const nombre =
-      t.nombre_razon_social ??
-      t.razon_social ??
-      t.nombre ??
-      t.name ??
-      "";
-
-    return {
-      id: t.id,
-      tipo_documento: t.tipo_documento ?? "",
-      numero_documento: t.numero_documento ?? "",
-      nombre,                         // 👈 usamos el nombre normalizado
-      email: t.email ?? "",
-      telefono: t.telefono ?? "",
-    };
-  });
+  return arr.map(t => ({
+    ...t,
+    // Asegurar que 'nombre' siempre exista (para Contabilidad/Nómina)
+    nombre: t.nombre ?? t.nombre_razon_social ?? t.name ?? "",
+    // Asegurar que 'nombre_razon_social' siempre exista (para tabla Terceros)
+    nombre_razon_social: t.nombre_razon_social ?? t.nombre ?? t.name ?? "",
+  }));
 };
 
 export function useTerceros(filters = {}) {
