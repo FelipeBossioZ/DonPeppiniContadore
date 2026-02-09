@@ -14,7 +14,8 @@ import {
   FileSpreadsheet,
   Landmark,
   TrendingUp,
-  Lock
+  Lock,
+  Briefcase
 } from 'lucide-react';
 import { authService } from '../services/auth';
 import EmpresaSelector from './EmpresaSelector';
@@ -37,6 +38,7 @@ const Layout = () => {
     { name: 'Terceros', href: '/terceros', icon: Users },
     { name: 'Contabilidad', href: '/contabilidad', icon: BookOpen },
     { name: 'Facturación', href: '/facturacion', icon: FileText },
+    { name: 'Nómina', href: '/nomina', icon: Briefcase },
     { name: 'Reportes', href: '/reportes', icon: BarChart3 },
     { name: 'Estados Financieros', href: '/estados-financieros', icon: FileText },
     { name: 'Medios Magnéticos', href: '/medios-magneticos', icon: FileSpreadsheet },

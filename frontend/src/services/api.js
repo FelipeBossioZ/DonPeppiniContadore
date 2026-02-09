@@ -212,3 +212,67 @@ export async function updateCuenta({ id, ...cuentaData }) {
   const { data } = await instance.patch(`/contabilidad/cuentas/${id}/`, cuentaData);
   return data;
 }
+
+// ============================================================
+// 🎩 NÓMINA
+// ============================================================
+
+export async function getParametrosNomina(anio) {
+  const { data } = await instance.get('/nomina/parametros/vigente/', { params: { anio } });
+  return data;
+}
+
+export async function getEmpleados(filters = {}) {
+  const params = {};
+  if (filters.empresa) params.empresa = filters.empresa;
+  if (filters.activo !== undefined) params.activo = filters.activo;
+  if (filters.search) params.search = filters.search;
+  const { data } = await instance.get('/nomina/empleados/', { params });
+  return Array.isArray(data) ? data : (data.results || []);
+}
+
+export async function createEmpleado(empleadoData) {
+  const { data } = await instance.post('/nomina/empleados/', empleadoData);
+  return data;
+}
+
+export async function updateEmpleado({ id, ...empleadoData }) {
+  const { data } = await instance.patch(`/nomina/empleados/${id}/`, empleadoData);
+  return data;
+}
+
+export async function deleteEmpleado(id) {
+  await instance.delete(`/nomina/empleados/${id}/`);
+}
+
+export async function getNominas(filters = {}) {
+  const params = {};
+  if (filters.empresa) params.empresa = filters.empresa;
+  if (filters.anio) params.anio = filters.anio;
+  const { data } = await instance.get('/nomina/nominas/', { params });
+  return Array.isArray(data) ? data : (data.results || []);
+}
+
+export async function createNomina(nominaData) {
+  const { data } = await instance.post('/nomina/nominas/', nominaData);
+  return data;
+}
+
+export async function liquidarNomina({ id, novedades }) {
+  const { data } = await instance.post(`/nomina/nominas/${id}/liquidar/`, { novedades });
+  return data;
+}
+
+export async function pagarNomina(id) {
+  const { data } = await instance.post(`/nomina/nominas/${id}/pagar/`);
+  return data;
+}
+
+export async function deleteNomina(id) {
+  await instance.delete(`/nomina/nominas/${id}/`);
+}
+
+export async function getLiquidaciones(nominaId) {
+  const { data } = await instance.get('/nomina/liquidaciones/', { params: { nomina: nominaId } });
+  return Array.isArray(data) ? data : (data.results || []);
+}
