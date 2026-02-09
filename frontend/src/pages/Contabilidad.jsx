@@ -8,6 +8,7 @@ import { exportBalancePrueba } from "../utils/exports";
 import { toast } from "../ui/ToastHost";
 import ImportarAsientosModal from '../components/ImportarAsientosModal';
 import { FileSpreadsheet } from 'lucide-react';
+import { useEmpresa } from '../context/EmpresaContext';
 
 
 // Modal simple reutilizable
@@ -62,6 +63,8 @@ const fmtMoney = n => new Intl.NumberFormat("es-CO",{style:"currency",currency:"
 
 
 export default function Contabilidad() {
+  const { empresaId } = useEmpresa();
+
   // ---- filtros y paginación ----
   const [search, setSearch] = useState("");
   const [fechaInicio, setFechaInicio] = useState("");
@@ -98,7 +101,8 @@ export default function Contabilidad() {
   const [pucSearch, setPucSearch] = useState("");
 
   // ---- datos (React Query) ----
-  const { data: cuentas = [], isLoading: lCuentas, isError: eCuentas, error: errCuentas } = useCuentas({ search });
+  const { data: cuentasAll = [], isLoading: lCuentas, isError: eCuentas, error: errCuentas } = useCuentas({ search });
+  const cuentas = useMemo(() => empresaId ? cuentasAll.filter(c => c.empresa === empresaId || !c.empresa) : cuentasAll, [cuentasAll, empresaId]);
   const cuentaCodes = useMemo(()=> new Set(cuentas.map(c => String(c.codigo))) ,[cuentas]);
   const { data: asientosData = {}, isLoading: lAsientos, isError: eAsientos, error: errAsientos } =
     useAsientos({ fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined, page });
@@ -258,7 +262,7 @@ export default function Contabilidad() {
       );
     } else {
       createCta.mutate(
-        { codigo: cuentaForm.codigo, nombre: cuentaForm.nombre, naturaleza: cuentaForm.naturaleza },
+        { codigo: cuentaForm.codigo, nombre: cuentaForm.nombre, naturaleza: cuentaForm.naturaleza, empresa: empresaId },
         {
           onSuccess: () => { setOpenCuenta(false); toast("Cuenta creada"); },
           onError: (err) => toast(parseApiError(err), "error"),
