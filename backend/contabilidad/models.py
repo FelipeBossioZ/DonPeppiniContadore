@@ -171,6 +171,12 @@ class MovimientoContable(models.Model):
     """Movimiento de un asiento (línea de débito o crédito)"""
     asiento = models.ForeignKey(AsientoContable, on_delete=models.CASCADE, related_name='movimientos')
     cuenta = models.ForeignKey(Cuenta, on_delete=models.PROTECT)
+    tercero = models.ForeignKey(
+        Tercero, on_delete=models.PROTECT,
+        null=True, blank=True,
+        verbose_name="Tercero (línea)",
+        help_text="Si vacío, hereda el tercero del asiento."
+    )
     debito = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Débito")
     credito = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name="Crédito")
     

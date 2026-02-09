@@ -198,3 +198,17 @@ export async function deleteInvoice(id) {
   const { data } = await instance.delete(`/facturacion/facturas/${id}/`);
   return data;
 }
+
+// ============================================================
+// 🎩 CUENTAS - CRUD
+// ============================================================
+
+export async function createCuenta(cuentaData) {
+  const { data } = await instance.post('/contabilidad/cuentas/', cuentaData);
+  return data;
+}
+
+export async function updateCuenta({ id, ...cuentaData }) {
+  const { data } = await instance.patch(`/contabilidad/cuentas/${id}/`, cuentaData);
+  return data;
+}

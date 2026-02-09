@@ -58,14 +58,12 @@ def _parse_date(val):
 
 
 
-class CuentaViewSet(viewsets.ReadOnlyModelViewSet):
+class CuentaViewSet(viewsets.ModelViewSet):
     """
-    ViewSet para visualizar las Cuentas Contables.
-
-    Proporciona las acciones `list` y `retrieve` (solo lectura).
-    Permite filtrar por el nombre de la cuenta.
+    ViewSet para gestión del Plan de Cuentas.
+    Permite listar, crear, editar y desactivar cuentas.
     """
-    
+    permission_classes = [IsAuthenticated]
     queryset = Cuenta.objects.select_related("padre", "empresa").all().order_by("codigo")
     serializer_class = CuentaSerializer
     filter_backends = [filters.SearchFilter]
@@ -81,7 +79,7 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
     ya que los asientos no deben modificarse (se deben crear asientos de ajuste).
     """
     permission_classes = [IsAuthenticated]
-    queryset = AsientoContable.objects.prefetch_related("movimientos").all()
+    queryset = AsientoContable.objects.select_related("tercero").prefetch_related("movimientos", "movimientos__tercero", "movimientos__cuenta").all()
     serializer_class = AsientoContableSerializer
     http_method_names = ['get', 'post', 'head', 'options']  # Deshabilitar PUT, PATCH, DELETE
 

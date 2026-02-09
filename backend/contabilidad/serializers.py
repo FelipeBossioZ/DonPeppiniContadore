@@ -4,42 +4,148 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 from .models import Cuenta, AsientoContable, MovimientoContable, PeriodoContable
-from terceros.models import Tercero 
+from terceros.models import Tercero
 from datetime import date
 
 
 TWOPLACES = Decimal("0.01")
 
 
-
-# --- Plan de cuentas ---
+# --- Plan de cuentas (lectura + escritura) ---
 class CuentaSerializer(serializers.ModelSerializer):
-    padre = serializers.SlugRelatedField(slug_field="codigo", read_only=True)
+    padre = serializers.SlugRelatedField(
+        slug_field="codigo", read_only=True
+    )
+    padre_codigo = serializers.CharField(
+        write_only=True, required=False, allow_blank=True,
+        help_text="Código del padre. Se resuelve automáticamente si se omite."
+    )
 
     class Meta:
         model = Cuenta
-        fields = ["id", "codigo", "nombre", "padre"]
+        fields = [
+            "id", "codigo", "nombre", "naturaleza", "tipo",
+            "nivel", "activa", "padre", "padre_codigo",
+            "empresa",
+        ]
+        read_only_fields = ["id", "padre", "nivel", "tipo"]
+        extra_kwargs = {
+            "empresa": {"required": False},
+            "naturaleza": {"required": False},
+        }
+
+    def _auto_fields(self, codigo):
+        """Determinar naturaleza, tipo, nivel y padre automáticamente por código."""
+        result = {}
+        if not codigo:
+            return result
+
+        # Naturaleza por primer dígito (NIIF Colombia)
+        first = codigo[0]
+        if first in ("2", "3", "4"):
+            result["naturaleza"] = "C"
+        else:
+            result["naturaleza"] = "D"
+
+        # Tipo y nivel por longitud
+        length = len(codigo)
+        tipo_map = {1: "Clase", 2: "Grupo", 4: "Cuenta", 6: "Subcuenta"}
+        result["tipo"] = tipo_map.get(length, "Auxiliar")
+        result["nivel"] = min(length, 6)
+
+        return result
+
+    def _resolve_padre(self, codigo, empresa):
+        """Buscar cuenta padre más cercana por prefijo."""
+        if not codigo or len(codigo) <= 1:
+            return None
+        for end in range(len(codigo) - 1, 0, -1):
+            prefix = codigo[:end]
+            padre = Cuenta.objects.filter(empresa=empresa, codigo=prefix).first()
+            if padre:
+                return padre
+        return None
+
+    def create(self, validated_data):
+        padre_codigo = validated_data.pop("padre_codigo", None)
+        codigo = validated_data.get("codigo", "")
+
+        # Auto-determinar campos
+        auto = self._auto_fields(codigo)
+        for k, v in auto.items():
+            validated_data.setdefault(k, v)
+
+        # Resolver padre
+        empresa = validated_data.get("empresa")
+        if padre_codigo:
+            try:
+                validated_data["padre"] = Cuenta.objects.get(
+                    empresa=empresa, codigo=padre_codigo
+                )
+            except Cuenta.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"padre_codigo": f"No existe cuenta '{padre_codigo}' en esta empresa."}
+                )
+        else:
+            validated_data["padre"] = self._resolve_padre(codigo, empresa)
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        padre_codigo = validated_data.pop("padre_codigo", None)
+        codigo = validated_data.get("codigo", instance.codigo)
+
+        if codigo != instance.codigo:
+            auto = self._auto_fields(codigo)
+            for k, v in auto.items():
+                validated_data.setdefault(k, v)
+
+        if padre_codigo is not None:
+            empresa = validated_data.get("empresa", instance.empresa)
+            if padre_codigo == "":
+                validated_data["padre"] = None
+            else:
+                try:
+                    validated_data["padre"] = Cuenta.objects.get(
+                        empresa=empresa, codigo=padre_codigo
+                    )
+                except Cuenta.DoesNotExist:
+                    raise serializers.ValidationError(
+                        {"padre_codigo": f"No existe cuenta '{padre_codigo}'."}
+                    )
+
+        return super().update(instance, validated_data)
 
 
-# --- Movimientos ---
+# --- Movimientos (ahora con tercero por línea) ---
 class MovimientoContableSerializer(serializers.ModelSerializer):
-    # Permite mandar código en lugar de FK de cuenta
     cuenta_codigo = serializers.CharField(write_only=True, required=False)
+    tercero = serializers.PrimaryKeyRelatedField(
+        queryset=Tercero.objects.all(), required=False, allow_null=True
+    )
+    tercero_nombre = serializers.SerializerMethodField()
 
     class Meta:
         model = MovimientoContable
-        fields = ["id", "cuenta", "cuenta_codigo", "debito", "credito"]
-        read_only_fields = ["id"]
+        fields = [
+            "id", "cuenta", "cuenta_codigo",
+            "tercero", "tercero_nombre",
+            "debito", "credito",
+        ]
+        read_only_fields = ["id", "tercero_nombre"]
         extra_kwargs = {
-            "cuenta": {"required": False},  # porque podemos usar cuenta_codigo
+            "cuenta": {"required": False},
         }
 
+    def get_tercero_nombre(self, obj):
+        if obj.tercero:
+            return obj.tercero.nombre_razon_social
+        return None
+
     def validate(self, attrs):
-        # cuenta por id o por código
         if not attrs.get("cuenta") and not attrs.get("cuenta_codigo"):
             raise serializers.ValidationError("Debe enviar 'cuenta' (id) o 'cuenta_codigo' (código).")
 
-        # normalizar a 2 decimales y validar exclusión
         deb = Decimal(attrs.get("debito") or 0).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
         cre = Decimal(attrs.get("credito") or 0).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
         attrs["debito"], attrs["credito"] = deb, cre
@@ -57,6 +163,8 @@ class MovimientoContableSerializer(serializers.ModelSerializer):
                 attrs["cuenta"] = Cuenta.objects.get(codigo=code)
             except Cuenta.DoesNotExist:
                 raise serializers.ValidationError({"cuenta_codigo": f"No existe la cuenta con código '{code}'."})
+            except Cuenta.MultipleObjectsReturned:
+                attrs["cuenta"] = Cuenta.objects.filter(codigo=code).first()
         return attrs
 
     def create(self, validated_data):
@@ -72,31 +180,34 @@ class MovimientoContableSerializer(serializers.ModelSerializer):
 class AsientoContableSerializer(serializers.ModelSerializer):
     movimientos = MovimientoContableSerializer(many=True)
     tercero = serializers.PrimaryKeyRelatedField(queryset=Tercero.objects.all())
+    tercero_nombre = serializers.SerializerMethodField()
 
     class Meta:
         model = AsientoContable
         fields = [
-            "id", "fecha", "concepto", "tercero",
+            "id", "fecha", "concepto", "tercero", "tercero_nombre",
             "descripcion", "descripcion_adicional",
-            "fiscal_year", "fiscal_period",        # <<< AÑADIR
+            "fiscal_year", "fiscal_period",
             "movimientos", "estado", "anulado_por", "anulado_en", "anulacion_motivo", "ajusta_a",
         ]
-        read_only_fields = ["id", "estado", "anulado_por", "anulado_en", "ajusta_a"]
+        read_only_fields = ["id", "estado", "anulado_por", "anulado_en", "ajusta_a", "tercero_nombre"]
+
+    def get_tercero_nombre(self, obj):
+        if obj.tercero:
+            return obj.tercero.nombre_razon_social
+        return None
 
     def validate(self, attrs):
         errors = {}
 
-        # --- Fecha obligatoria
         fecha = attrs.get("fecha") or getattr(self.instance, "fecha", None)
         if not fecha:
             errors["fecha"] = "La fecha es obligatoria."
 
-        # --- Tercero obligatorio
         tercero = attrs.get("tercero") or getattr(self.instance, "tercero", None) or self.initial_data.get("tercero")
         if not tercero:
             errors["tercero"] = "Seleccione un tercero."
 
-        # --- Movimientos (tu lógica actual, intacta)
         movs_in = attrs.get("movimientos") or self.initial_data.get("movimientos", [])
         if not movs_in:
             errors["movimientos"] = ["Debe registrar al menos un movimiento."]
@@ -110,7 +221,6 @@ class AsientoContableSerializer(serializers.ModelSerializer):
                 cuenta = get("cuenta")
                 if not cuenta and not code:
                     fila_errores.append(f"Fila {i}: falta 'cuenta' o 'cuenta_codigo'.")
-                # (si quieres validar existencia de code aquí, mantén tu lógica)
                 deb = Decimal(str(get("debito") or 0)).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
                 cre = Decimal(str(get("credito") or 0)).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
                 if deb <= 0 and cre <= 0: fila_errores.append(f"Fila {i}: debe tener valor en Débito o en Crédito.")
@@ -123,7 +233,6 @@ class AsientoContableSerializer(serializers.ModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
 
-        # --- Validación de PERÍODO CONTABLE / Mes 13
         fy = attrs.get("fiscal_year")   or (fecha.year if fecha else None)
         fp = attrs.get("fiscal_period") or (fecha.month if fecha else None)
         p = PeriodoContable.ensure(fy)
@@ -131,7 +240,6 @@ class AsientoContableSerializer(serializers.ModelSerializer):
         if fp == 13:
             if not p.habilitar_mes13:
                 raise serializers.ValidationError("Mes 13 deshabilitado para este año.")
-            # La FECHA real debe estar dentro de la ventana de ajustes del año 'fy'
             if not p.in_ajustes(fecha):
                 raise serializers.ValidationError("Mes 13 solo permitido dentro de la ventana de ajustes del período.")
         else:
