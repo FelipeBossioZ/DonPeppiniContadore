@@ -7,9 +7,10 @@ import {
   Building2, TrendingUp, TrendingDown, Loader2, AlertCircle,
   Wallet, CreditCard, PiggyBank, FileText, BarChart3, PieChart,
   Activity, Bell, Users, Clock, Calendar, CheckCircle, AlertTriangle,
-  Info, ArrowUpRight, ArrowDownRight, RefreshCw
+  Info, ArrowUpRight, ArrowDownRight, RefreshCw, Upload, Trash2, Image
 } from 'lucide-react';
 import { useEmpresa } from '../context/EmpresaContext';
+import { uploadLogo, deleteLogo, getLogoBlob } from '../services/api';
 import api from '../services/api';
 
 export default function Dashboard() {
@@ -119,15 +120,64 @@ export default function Dashboard() {
 
   const d = datos || {};
 
+  // Logo empresa
+  const [logoUrl, setLogoUrl] = useState(null);
+  useEffect(() => {
+    if (empresaId) {
+      getLogoBlob(empresaId).then(url => setLogoUrl(url)).catch(() => setLogoUrl(null));
+    }
+  }, [empresaId]);
+
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await uploadLogo(empresaId, file);
+      const url = await getLogoBlob(empresaId);
+      setLogoUrl(url);
+    } catch (err) {
+      alert("Error subiendo logo: " + (err.response?.data?.error || err.message));
+    }
+    e.target.value = '';
+  };
+
+  const handleLogoDelete = async () => {
+    if (!confirm("¿Eliminar el logo de la empresa?")) return;
+    try {
+      await deleteLogo(empresaId);
+      setLogoUrl(null);
+    } catch (err) { console.error(err); }
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-            <span>🎩</span> Dashboard
-          </h1>
-          <p className="text-gray-600 mt-1">{empresaActual.razon_social}</p>
+        <div className="flex items-center gap-4">
+          {/* Logo empresa */}
+          <div className="relative group">
+            {logoUrl ? (
+              <div className="relative">
+                <img src={logoUrl} alt="Logo" className="h-14 w-14 rounded-lg object-contain border bg-white p-1" />
+                <button onClick={handleLogoDelete}
+                  className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Eliminar logo">
+                  <Trash2 size={10} />
+                </button>
+              </div>
+            ) : (
+              <label className="h-14 w-14 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-colors" title="Subir logo de empresa">
+                <Image size={20} className="text-gray-400" />
+                <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/tiff" className="hidden" onChange={handleLogoUpload} />
+              </label>
+            )}
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
+              <span>🎩</span> Dashboard
+            </h1>
+            <p className="text-gray-600 mt-1">{empresaActual.razon_social}</p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button

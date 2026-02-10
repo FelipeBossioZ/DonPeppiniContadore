@@ -14,8 +14,8 @@ function downloadBlob(data, contentType, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-export async function exportBalancePrueba({ inicio, fin } = {}) {
-  if (!authService.getAccessToken()) {
+export async function exportBalancePrueba({ inicio, fin, empresa } = {}) {
+  if (!authService.getToken()) {
     window.location.href = "/login";
     return;
   }
@@ -23,6 +23,7 @@ export async function exportBalancePrueba({ inicio, fin } = {}) {
   const qs = new URLSearchParams();
   if (inicio) qs.set("fecha_inicio", inicio);
   if (fin)    qs.set("fecha_fin",   fin);
+  if (empresa) qs.set("empresa", empresa);
   qs.set("formato", "xlsx");
 
   const { data, headers } = await api.get(
@@ -32,6 +33,30 @@ export async function exportBalancePrueba({ inicio, fin } = {}) {
 
   const cd  = headers["content-disposition"] || "";
   const fn  = cd.split("filename=")[1]?.replace(/"/g, "") || "balance_pruebas.xlsx";
+  const cty = headers["content-type"] || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  downloadBlob(data, cty, fn);
+}
+
+export async function exportBalanceTerceros({ inicio, fin, empresa, cuenta } = {}) {
+  if (!authService.getToken()) {
+    window.location.href = "/login";
+    return;
+  }
+
+  const qs = new URLSearchParams();
+  if (inicio)  qs.set("fecha_inicio", inicio);
+  if (fin)     qs.set("fecha_fin",   fin);
+  if (empresa) qs.set("empresa", empresa);
+  if (cuenta)  qs.set("cuenta", cuenta);
+  qs.set("formato", "xlsx");
+
+  const { data, headers } = await api.get(
+    `/contabilidad/reportes/balance-terceros/?${qs.toString()}`,
+    { responseType: "blob" }
+  );
+
+  const cd  = headers["content-disposition"] || "";
+  const fn  = cd.split("filename=")[1]?.replace(/"/g, "") || "balance_terceros.xlsx";
   const cty = headers["content-type"] || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   downloadBlob(data, cty, fn);
 }

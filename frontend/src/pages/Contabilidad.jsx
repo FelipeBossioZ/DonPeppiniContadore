@@ -379,7 +379,7 @@ export default function Contabilidad() {
         onClick={async () => {
           if (!fechaInicio && !fechaFin) return toast("Selecciona rango de fechas", "error");
           try {
-            await exportBalancePrueba({ inicio: fechaInicio, fin: fechaFin });
+            await exportBalancePrueba({ inicio: fechaInicio, fin: fechaFin, empresa: empresaId });
             toast("Export listo");
           } catch (e) {
             toast("No se pudo exportar", "error");
@@ -977,7 +977,7 @@ export default function Contabilidad() {
               <tbody>
                 {openDet.movimientos?.map((m,i)=>(
                   <tr key={i} className="border-t">
-                    <td className="p-2">{m.cuenta?.codigo ?? m.cuenta} — {m.cuenta?.nombre ?? ""}</td>
+                    <td className="p-2">{m.cuenta_codigo_display ?? m.cuenta?.codigo ?? m.cuenta} — {m.cuenta_nombre ?? m.cuenta?.nombre ?? ""}</td>
                     <td className="p-2 text-gray-500 text-xs">
                       {m.tercero_nombre || <span className="italic text-gray-400">— hereda —</span>}
                     </td>

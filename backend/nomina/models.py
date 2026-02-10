@@ -20,6 +20,7 @@ class ParametrosNomina(models.Model):
     # Salarios
     smlv = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="SMLV")
     auxilio_transporte = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="Auxilio de transporte")
+    uvt = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('52374'), verbose_name="UVT")
 
     # Seguridad social — Empleado
     salud_empleado = models.DecimalField(max_digits=5, decimal_places=3, default=4.000, verbose_name="% Salud empleado")
@@ -73,6 +74,7 @@ class ParametrosNomina(models.Model):
         obj, _ = cls.objects.get_or_create(anio=anio, defaults={
             'smlv': Decimal('1750905'),
             'auxilio_transporte': Decimal('249095'),
+            'uvt': Decimal('52374'),
         })
         return obj
 
@@ -130,6 +132,28 @@ class Empleado(models.Model):
     cargo = models.CharField(max_length=100, blank=True, null=True)
     centro_costo = models.CharField(max_length=50, blank=True, null=True)
 
+    # Retención en la fuente — deducciones Art. 387 / 388 ET
+    tiene_dependientes = models.BooleanField(default=False,
+        verbose_name="¿Tiene dependientes?",
+        help_text="Art. 387 ET — Hijos <18, 18-25 estudiando, cónyuge, padres/hermanos sin ingresos")
+    deduccion_vivienda = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+        verbose_name="Intereses vivienda mensual",
+        help_text="Art. 119/387 ET — Hasta 100 UVT mensuales")
+    deduccion_medicina_prepagada = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+        verbose_name="Medicina prepagada mensual",
+        help_text="Art. 387 ET — Hasta 16 UVT mensuales")
+    aportes_voluntarios_pension = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+        verbose_name="Aportes voluntarios pensión mensual",
+        help_text="Art. 126-1 ET — Renta exenta, hasta 25% del ingreso")
+    aportes_afc = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+        verbose_name="Aportes AFC mensual",
+        help_text="Art. 126-4 ET — Renta exenta, hasta 25% del ingreso")
+
+    # Modalidad de trabajo
+    trabajo_remoto = models.BooleanField(default=False,
+        verbose_name="Trabajo remoto / teletrabajo",
+        help_text="Si es True, no se paga auxilio de transporte (Ley 1221/2008)")
+
     # Estado
     activo = models.BooleanField(default=True)
 
@@ -145,7 +169,9 @@ class Empleado(models.Model):
     @property
     def tiene_auxilio_transporte(self):
         params = ParametrosNomina.del_anio()
-        return self.salario_base <= params.tope_auxilio_transporte() and not self.salario_integral
+        return (self.salario_base <= params.tope_auxilio_transporte()
+                and not self.salario_integral
+                and not self.trabajo_remoto)
 
     @property
     def ibc_salud_pension(self):
@@ -187,6 +213,15 @@ class Nomina(models.Model):
     total_deducciones = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     total_neto = models.DecimalField(max_digits=15, decimal_places=2, default=0)
     total_costo_empresa = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+
+    # Referencia al asiento contable generado
+    asiento_contable = models.ForeignKey(
+        'contabilidad.AsientoContable',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='nomina_origen',
+        verbose_name="Asiento contable"
+    )
 
     class Meta:
         verbose_name = "Nómina"
@@ -314,6 +349,29 @@ class LiquidacionEmpleado(models.Model):
         else:
             self.fsp = Decimal('0')
 
+        # --- RETENCIÓN EN LA FUENTE (Art. 383 / 388 ET — Procedimiento 1) ---
+        from .retencion_fuente import calcular_retencion_fuente
+        ret = calcular_retencion_fuente(
+            salario_devengado=self.salario_devengado,
+            auxilio_transporte=self.auxilio_transporte,
+            horas_extras=self.horas_extras,
+            comisiones=self.comisiones,
+            bonificaciones=self.bonificaciones,
+            otros_devengados=self.otros_devengados,
+            uvt=params.uvt,
+            aporte_salud_empleado=self.salud_empleado,
+            aporte_pension_empleado=self.pension_empleado,
+            aporte_fsp=self.fsp,
+            tiene_dependientes=emp.tiene_dependientes,
+            deduccion_vivienda=emp.deduccion_vivienda,
+            deduccion_medicina_prepagada=emp.deduccion_medicina_prepagada,
+            aportes_voluntarios_pension=emp.aportes_voluntarios_pension,
+            aportes_afc=emp.aportes_afc,
+            salario_integral=emp.salario_integral,
+            salario_base_mensual=emp.salario_base,
+        )
+        self.retencion_fuente = ret['retencion']
+
         self.total_deducciones = (
             self.salud_empleado + self.pension_empleado + self.fsp +
             self.retencion_fuente + self.libranzas + self.otros_descuentos
@@ -397,3 +455,222 @@ class DetalleHorasExtras(models.Model):
         factor = (Decimal('1') + self.porcentaje_recargo / Decimal('100'))
         self.valor_total = (self.cantidad_horas * self.valor_hora * factor).quantize(TWO)
         return self
+
+
+# ============================================================
+# LIQUIDACIÓN DE CONTRATO
+# ============================================================
+class LiquidacionContrato(models.Model):
+    """Liquidación definitiva al terminar la relación laboral."""
+    empresa = models.ForeignKey('empresas.Empresa', on_delete=models.CASCADE, related_name='liquidaciones_contrato')
+    empleado = models.ForeignKey(Empleado, on_delete=models.PROTECT, related_name='liquidaciones_contrato')
+
+    MOTIVO_CHOICES = [
+        ('RENUNCIA', 'Renuncia voluntaria'),
+        ('DESPIDO_JUSTA', 'Despido con justa causa'),
+        ('DESPIDO_INJUSTA', 'Despido sin justa causa'),
+        ('MUTUO', 'Mutuo acuerdo'),
+        ('TERMINACION_FIJO', 'Terminación contrato fijo'),
+        ('FIN_OBRA', 'Finalización obra o labor'),
+        ('MUERTE', 'Muerte del trabajador'),
+    ]
+    ESTADO_CHOICES = [
+        ('borrador', 'Borrador'),
+        ('liquidada', 'Liquidada'),
+        ('pagada', 'Pagada'),
+        ('anulada', 'Anulada'),
+    ]
+
+    motivo = models.CharField(max_length=20, choices=MOTIVO_CHOICES)
+    fecha_retiro = models.DateField(verbose_name="Fecha de retiro")
+    fecha_liquidacion = models.DateField(auto_now_add=True)
+    estado = models.CharField(max_length=10, choices=ESTADO_CHOICES, default='borrador')
+    notas = models.TextField(blank=True, null=True)
+
+    # Datos del empleado al momento del retiro (snapshot)
+    salario_base = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    fecha_ingreso = models.DateField(null=True)
+    tipo_contrato = models.CharField(max_length=3, default='IND')
+    salario_integral = models.BooleanField(default=False)
+
+    # Para contrato fijo: fecha fin del contrato (para indemnización)
+    fecha_fin_contrato = models.DateField(null=True, blank=True,
+        help_text="Solo para contratos a término fijo: fecha de vencimiento")
+    trabajo_remoto = models.BooleanField(default=False)
+
+    # Días de vacaciones ya disfrutados en el último periodo
+    dias_vacaciones_disfrutados = models.DecimalField(max_digits=5, decimal_places=2, default=0,
+        verbose_name="Días de vacaciones ya disfrutados")
+
+    # === CONCEPTOS CALCULADOS ===
+    # Salario proporcional (días trabajados del último mes)
+    dias_ultimo_mes = models.PositiveSmallIntegerField(default=0)
+    salario_proporcional = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    auxilio_transporte_prop = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Vacaciones
+    dias_vacaciones_pendientes = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    vacaciones = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Prima de servicios proporcional
+    dias_prima = models.PositiveSmallIntegerField(default=0)
+    prima_servicios = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Cesantías proporcionales
+    dias_cesantias = models.PositiveSmallIntegerField(default=0)
+    cesantias = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Intereses sobre cesantías
+    intereses_cesantias = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Indemnización (solo despido sin justa causa)
+    indemnizacion = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Deducciones
+    retencion_fuente = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    deduccion_salud = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    deduccion_pension = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    otros_descuentos = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Totales
+    total_devengado = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total_deducciones = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    neto_pagar = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    # Asiento contable
+    asiento_contable = models.ForeignKey(
+        'contabilidad.AsientoContable',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='liquidacion_contrato_origen',
+    )
+
+    class Meta:
+        verbose_name = "Liquidación de Contrato"
+        verbose_name_plural = "Liquidaciones de Contrato"
+        ordering = ['-fecha_retiro']
+
+    def __str__(self):
+        return f"Liquidación {self.empleado} — {self.get_motivo_display()} — {self.fecha_retiro}"
+
+
+# ============================================================
+# VACACIONES
+# ============================================================
+class Vacaciones(models.Model):
+    """Registro de vacaciones tomadas por un empleado."""
+    empresa = models.ForeignKey('empresas.Empresa', on_delete=models.CASCADE, related_name='vacaciones')
+    empleado = models.ForeignKey(Empleado, on_delete=models.PROTECT, related_name='vacaciones')
+
+    ESTADO_CHOICES = [
+        ('solicitada', 'Solicitada'),
+        ('aprobada', 'Aprobada'),
+        ('disfrutada', 'Disfrutada'),
+        ('rechazada', 'Rechazada'),
+    ]
+
+    fecha_inicio = models.DateField()
+    fecha_fin = models.DateField()
+    dias_habiles = models.DecimalField(max_digits=5, decimal_places=1, default=0)
+    estado = models.CharField(max_length=12, choices=ESTADO_CHOICES, default='solicitada')
+    notas = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Vacación"
+        verbose_name_plural = "Vacaciones"
+        ordering = ['-fecha_inicio']
+
+    def __str__(self):
+        return f"{self.empleado} — {self.fecha_inicio} a {self.fecha_fin} ({self.dias_habiles}d)"
+
+
+# ============================================================
+# PRIMA SEMESTRAL
+# ============================================================
+class PrimaSemestral(models.Model):
+    """Liquidación de prima de servicios (Art. 306 CST)."""
+    empresa = models.ForeignKey('empresas.Empresa', on_delete=models.CASCADE, related_name='primas')
+    anio = models.PositiveIntegerField()
+    semestre = models.PositiveSmallIntegerField(choices=[(1, 'Primer semestre (Jun)'), (2, 'Segundo semestre (Dic)')])
+    fecha_liquidacion = models.DateField(auto_now_add=True)
+
+    ESTADO_CHOICES = [
+        ('borrador', 'Borrador'),
+        ('liquidada', 'Liquidada'),
+        ('pagada', 'Pagada'),
+    ]
+    estado = models.CharField(max_length=10, choices=ESTADO_CHOICES, default='borrador')
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    asiento_contable = models.ForeignKey(
+        'contabilidad.AsientoContable', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='prima_origen')
+
+    class Meta:
+        verbose_name = "Prima Semestral"
+        verbose_name_plural = "Primas Semestrales"
+        unique_together = ['empresa', 'anio', 'semestre']
+        ordering = ['-anio', '-semestre']
+
+    def __str__(self):
+        return f"Prima S{self.semestre} {self.anio} — {self.get_estado_display()}"
+
+
+class DetallePrima(models.Model):
+    """Detalle de prima por empleado."""
+    prima = models.ForeignKey(PrimaSemestral, on_delete=models.CASCADE, related_name='detalles')
+    empleado = models.ForeignKey(Empleado, on_delete=models.PROTECT)
+    salario_base = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    auxilio_transporte = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    dias_trabajados = models.PositiveSmallIntegerField(default=0)
+    valor_prima = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = ['prima', 'empleado']
+
+
+# ============================================================
+# CESANTÍAS ANUALES
+# ============================================================
+class CesantiasAnuales(models.Model):
+    """Liquidación anual de cesantías (Art. 249 CST) + intereses (Ley 52/1975)."""
+    empresa = models.ForeignKey('empresas.Empresa', on_delete=models.CASCADE, related_name='cesantias')
+    anio = models.PositiveIntegerField()
+    fecha_liquidacion = models.DateField(auto_now_add=True)
+
+    ESTADO_CHOICES = [
+        ('borrador', 'Borrador'),
+        ('liquidada', 'Liquidada'),
+        ('consignada', 'Consignada al fondo'),
+    ]
+    estado = models.CharField(max_length=12, choices=ESTADO_CHOICES, default='borrador')
+    total_cesantias = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total_intereses = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    asiento_contable = models.ForeignKey(
+        'contabilidad.AsientoContable', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='cesantias_origen')
+
+    class Meta:
+        verbose_name = "Cesantías Anuales"
+        verbose_name_plural = "Cesantías Anuales"
+        unique_together = ['empresa', 'anio']
+        ordering = ['-anio']
+
+    def __str__(self):
+        return f"Cesantías {self.anio} — {self.get_estado_display()}"
+
+
+class DetalleCesantias(models.Model):
+    """Detalle de cesantías por empleado."""
+    cesantias = models.ForeignKey(CesantiasAnuales, on_delete=models.CASCADE, related_name='detalles')
+    empleado = models.ForeignKey(Empleado, on_delete=models.PROTECT)
+    salario_base = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    auxilio_transporte = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    dias_trabajados = models.PositiveSmallIntegerField(default=0)
+    valor_cesantias = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    valor_intereses = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = ['cesantias', 'empleado']

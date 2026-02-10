@@ -15,7 +15,10 @@ import {
   Landmark,
   TrendingUp,
   Lock,
-  Briefcase
+  Briefcase,
+  Calculator,
+  UserMinus,
+  Gift,
 } from 'lucide-react';
 import { authService } from '../services/auth';
 import EmpresaSelector from './EmpresaSelector';
@@ -39,6 +42,10 @@ const Layout = () => {
     { name: 'Contabilidad', href: '/contabilidad', icon: BookOpen },
     { name: 'Facturación', href: '/facturacion', icon: FileText },
     { name: 'Nómina', href: '/nomina', icon: Briefcase },
+    { name: 'Simulador Retención', href: '/simulador-retencion', icon: Calculator },
+    { name: 'Liquidación Contrato', href: '/liquidacion-contrato', icon: UserMinus },
+    { name: 'Prestaciones', href: '/prestaciones', icon: Gift },
+    { name: 'Balance Terceros', href: '/balance-terceros', icon: Users },
     { name: 'Reportes', href: '/reportes', icon: BarChart3 },
     { name: 'Estados Financieros', href: '/estados-financieros', icon: FileText },
     { name: 'Medios Magnéticos', href: '/medios-magneticos', icon: FileSpreadsheet },

@@ -210,12 +210,16 @@ class LibroDiarioView(views.APIView):
     def get(self, request):
         fi = _parse_date(request.query_params.get('fecha_inicio'))
         ff = _parse_date(request.query_params.get('fecha_fin'))
+        empresa_id = request.query_params.get('empresa')
 
         movimientos = (
             MovimientoContable.objects
             .select_related('asiento', 'cuenta')
+            .filter(asiento__estado='vigente')
             .order_by('asiento__fecha', 'asiento__id')
         )
+        if empresa_id:
+            movimientos = movimientos.filter(asiento__empresa_id=empresa_id)
         if fi:
             movimientos = movimientos.filter(asiento__fecha__gte=fi)
         if ff:
@@ -240,11 +244,16 @@ class BalancePruebasView(views.APIView):
     def get(self, request):
         fi = _parse_date(request.query_params.get('fecha_inicio'))
         ff = _parse_date(request.query_params.get('fecha_fin'))
+        empresa_id = request.query_params.get('empresa')
 
         cuentas = Cuenta.objects.all().order_by('codigo')
+        if empresa_id:
+            cuentas = cuentas.filter(empresa_id=empresa_id)
 
         # Movimientos del período
-        movs = MovimientoContable.objects.all()
+        movs = MovimientoContable.objects.filter(asiento__estado='vigente')
+        if empresa_id:
+            movs = movs.filter(asiento__empresa_id=empresa_id)
         if fi:
             movs = movs.filter(asiento__fecha__gte=fi)
         if ff:
@@ -264,7 +273,9 @@ class BalancePruebasView(views.APIView):
         # Saldos anteriores (saldo inicial)
         prev_dict = {}
         if fi:
-            movs_prev = MovimientoContable.objects.filter(asiento__fecha__lt=fi)
+            movs_prev = MovimientoContable.objects.filter(asiento__fecha__lt=fi, asiento__estado='vigente')
+            if empresa_id:
+                movs_prev = movs_prev.filter(asiento__empresa_id=empresa_id)
             prev = movs_prev.values('cuenta__codigo').annotate(deb=Sum('debito'), cre=Sum('credito'))
             prev_dict = {
                 x['cuenta__codigo']: (x['deb'] or Decimal('0')) - (x['cre'] or Decimal('0'))
@@ -342,6 +353,223 @@ class BalancePruebasView(views.APIView):
         }, status=200)
 
 
+class BalancePorTercerosView(views.APIView):
+    """
+    🎩 Balance por Terceros
+    Muestra saldos agrupados por tercero, opcionalmente filtrados por cuenta.
+    Útil para: cuentas por cobrar, por pagar, retenciones, aportes, etc.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Sum, F, Value, CharField
+        from django.db.models.functions import Coalesce
+
+        empresa_id = request.query_params.get('empresa')
+        fi = _parse_date(request.query_params.get('fecha_inicio'))
+        ff = _parse_date(request.query_params.get('fecha_fin'))
+        cuenta_prefijo = request.query_params.get('cuenta', '')  # ej: "23", "13", "2505"
+
+        if not empresa_id:
+            return Response({'error': 'Empresa es requerida'}, status=400)
+
+        # Base queryset
+        movs = MovimientoContable.objects.filter(
+            asiento__empresa_id=empresa_id,
+            asiento__estado='vigente',
+        ).select_related('cuenta', 'asiento__tercero')
+
+        if cuenta_prefijo:
+            movs = movs.filter(cuenta__codigo__startswith=cuenta_prefijo)
+
+        # --- Saldos anteriores (antes de fecha_inicio) ---
+        prev_dict = {}
+        if fi:
+            prev_qs = movs.filter(asiento__fecha__lt=fi)
+            prev = prev_qs.annotate(
+                terc_id=Coalesce(F('tercero_id'), F('asiento__tercero_id')),
+            ).values(
+                'terc_id',
+                cuenta_codigo=F('cuenta__codigo'),
+                cuenta_nombre=F('cuenta__nombre'),
+            ).annotate(
+                deb=Coalesce(Sum('debito'), Decimal('0')),
+                cre=Coalesce(Sum('credito'), Decimal('0')),
+            )
+            for row in prev:
+                key = (row['terc_id'], row['cuenta_codigo'])
+                prev_dict[key] = row['deb'] - row['cre']
+
+        # --- Movimientos del período ---
+        periodo_qs = movs
+        if fi:
+            periodo_qs = periodo_qs.filter(asiento__fecha__gte=fi)
+        if ff:
+            periodo_qs = periodo_qs.filter(asiento__fecha__lte=ff)
+
+        periodo = periodo_qs.annotate(
+            terc_id=Coalesce(F('tercero_id'), F('asiento__tercero_id')),
+        ).values(
+            'terc_id',
+            cuenta_codigo=F('cuenta__codigo'),
+            cuenta_nombre=F('cuenta__nombre'),
+        ).annotate(
+            total_debito=Coalesce(Sum('debito'), Decimal('0')),
+            total_credito=Coalesce(Sum('credito'), Decimal('0')),
+        ).order_by('cuenta_codigo', 'terc_id')
+
+        # Materializar para iterar múltiples veces
+        periodo = list(periodo)
+
+        # --- Obtener nombres de terceros ---
+        tercero_ids = set()
+        for row in periodo:
+            if row['terc_id']:
+                tercero_ids.add(row['terc_id'])
+        for key in prev_dict:
+            if key[0]:
+                tercero_ids.add(key[0])
+
+        from terceros.models import Tercero
+        terceros_map = {}
+        if tercero_ids:
+            for t in Tercero.objects.filter(id__in=tercero_ids).values('id', 'nombre_razon_social', 'numero_documento'):
+                terceros_map[t['id']] = {
+                    'nombre': t['nombre_razon_social'],
+                    'documento': t['numero_documento'],
+                }
+
+        # --- Construir reporte ---
+        reporte = []
+        totales = {'saldo_inicial': Decimal('0'), 'debitos': Decimal('0'), 'creditos': Decimal('0'), 'saldo_final': Decimal('0')}
+
+        # Agrupar por cuenta, luego por tercero
+        from collections import defaultdict
+        por_cuenta = defaultdict(list)
+
+        # Recopilar todas las combinaciones (cuenta, tercero)
+        all_keys = set()
+        for row in periodo:
+            all_keys.add((row['terc_id'], row['cuenta_codigo'], row['cuenta_nombre']))
+        for (tid, ccode), saldo in prev_dict.items():
+            # Buscar nombre de cuenta
+            all_keys.add((tid, ccode, ''))
+
+        for row in periodo:
+            key = (row['terc_id'], row['cuenta_codigo'])
+            ini = prev_dict.get(key, Decimal('0'))
+            deb = row['total_debito']
+            cre = row['total_credito']
+            fin = ini + deb - cre
+
+            if ini == 0 and deb == 0 and cre == 0:
+                continue
+
+            tercero_info = terceros_map.get(row['terc_id'], {'nombre': 'Sin tercero', 'documento': ''})
+
+            por_cuenta[row['cuenta_codigo']].append({
+                'tercero_id': row['terc_id'],
+                'tercero_nombre': tercero_info['nombre'],
+                'tercero_documento': tercero_info['documento'],
+                'saldo_inicial': float(ini),
+                'debitos': float(deb),
+                'creditos': float(cre),
+                'saldo_final': float(fin),
+            })
+
+            totales['saldo_inicial'] += ini
+            totales['debitos'] += deb
+            totales['creditos'] += cre
+            totales['saldo_final'] += fin
+
+        # Construir estructura por cuenta
+        for codigo in sorted(por_cuenta.keys()):
+            filas = por_cuenta[codigo]
+            nombre_cuenta = ''
+            for row in periodo:
+                if row['cuenta_codigo'] == codigo:
+                    nombre_cuenta = row['cuenta_nombre']
+                    break
+
+            subtotal = {
+                'saldo_inicial': sum(f['saldo_inicial'] for f in filas),
+                'debitos': sum(f['debitos'] for f in filas),
+                'creditos': sum(f['creditos'] for f in filas),
+                'saldo_final': sum(f['saldo_final'] for f in filas),
+            }
+
+            reporte.append({
+                'cuenta_codigo': codigo,
+                'cuenta_nombre': nombre_cuenta,
+                'terceros': sorted(filas, key=lambda x: x['tercero_nombre']),
+                'subtotal': subtotal,
+            })
+
+        # --- Formato Excel ---
+        formato = request.query_params.get('formato')
+        if formato == 'xlsx':
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Balance por Terceros"
+
+            ws['A1'] = "Balance por Terceros"
+            ws['A1'].font = Font(bold=True, size=14)
+            ws['A2'] = f"Período: {fi or 'Inicio'} a {ff or 'Fin'}"
+            if cuenta_prefijo:
+                ws['A3'] = f"Filtro cuenta: {cuenta_prefijo}*"
+
+            headers = ['Cuenta', 'Nombre Cuenta', 'Documento', 'Tercero', 'Saldo Inicial', 'Débitos', 'Créditos', 'Saldo Final']
+            ws.append([])
+            ws.append(headers)
+            for cell in ws[ws.max_row]:
+                cell.font = Font(bold=True)
+
+            for grupo in reporte:
+                for t in grupo['terceros']:
+                    ws.append([
+                        grupo['cuenta_codigo'], grupo['cuenta_nombre'],
+                        t['tercero_documento'], t['tercero_nombre'],
+                        t['saldo_inicial'], t['debitos'], t['creditos'], t['saldo_final'],
+                    ])
+                # Subtotal
+                ws.append([
+                    '', f"Subtotal {grupo['cuenta_codigo']}", '', '',
+                    grupo['subtotal']['saldo_inicial'], grupo['subtotal']['debitos'],
+                    grupo['subtotal']['creditos'], grupo['subtotal']['saldo_final'],
+                ])
+                ws[ws.max_row][1].font = Font(bold=True)
+
+            ws.append([
+                '', 'TOTAL GENERAL', '', '',
+                float(totales['saldo_inicial']), float(totales['debitos']),
+                float(totales['creditos']), float(totales['saldo_final']),
+            ])
+            for cell in ws[ws.max_row]:
+                cell.font = Font(bold=True)
+
+            widths = [12, 35, 15, 35, 16, 16, 16, 16]
+            for i, w in enumerate(widths, start=1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+
+            resp = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            resp["Content-Disposition"] = 'attachment; filename="balance_terceros.xlsx"'
+            wb.save(resp)
+            return resp
+
+        return Response({
+            'filtro_cuenta': cuenta_prefijo or 'Todas',
+            'fecha_inicio': str(fi) if fi else None,
+            'fecha_fin': str(ff) if ff else None,
+            'detalle': reporte,
+            'totales': {
+                'saldo_inicial': float(totales['saldo_inicial']),
+                'total_debitos': float(totales['debitos']),
+                'total_creditos': float(totales['creditos']),
+                'saldo_final': float(totales['saldo_final']),
+            }
+        })
+
+
 class LibroMayorView(views.APIView):
     """
     Reporte de Libro Mayor para una cuenta (por código).
@@ -408,19 +636,25 @@ class EstadoResultadosView(views.APIView):
         from decimal import Decimal
 
         fecha_fin = request.query_params.get('fecha_fin')
+        empresa_id = request.query_params.get('empresa')
         if not fecha_fin:
             return Response({"error": "Debe proporcionar una 'fecha_fin' en los parámetros."}, status=400)
 
-        # 1. Ingresos (Clase 4)
-        ingresos_agg = MovimientoContable.objects.filter(
+        base_qs = MovimientoContable.objects.filter(
             asiento__fecha__lte=fecha_fin,
+            asiento__estado='vigente',
+        )
+        if empresa_id:
+            base_qs = base_qs.filter(asiento__empresa_id=empresa_id)
+
+        # 1. Ingresos (Clase 4)
+        ingresos_agg = base_qs.filter(
             cuenta__codigo__startswith='4'
         ).aggregate(total_credito=Sum('credito'), total_debito=Sum('debito'))
         total_ingresos = (ingresos_agg['total_credito'] or 0) - (ingresos_agg['total_debito'] or 0)
 
         # 2. Costos de Ventas (Clase 6)
-        costos_agg = MovimientoContable.objects.filter(
-            asiento__fecha__lte=fecha_fin,
+        costos_agg = base_qs.filter(
             cuenta__codigo__startswith='6'
         ).aggregate(total_debito=Sum('debito'), total_credito=Sum('credito'))
         total_costos = (costos_agg['total_debito'] or 0) - (costos_agg['total_credito'] or 0)
@@ -428,15 +662,12 @@ class EstadoResultadosView(views.APIView):
         utilidad_bruta = total_ingresos - total_costos
 
         # 3. Gastos Operacionales (Clase 5)
-        gastos_agg = MovimientoContable.objects.filter(
-            asiento__fecha__lte=fecha_fin,
+        gastos_agg = base_qs.filter(
             cuenta__codigo__startswith='5'
         ).aggregate(total_debito=Sum('debito'), total_credito=Sum('credito'))
         total_gastos = (gastos_agg['total_debito'] or 0) - (gastos_agg['total_credito'] or 0)
 
         utilidad_operacional = utilidad_bruta - total_gastos
-
-        # Por ahora, un cálculo simplificado. Se pueden añadir más niveles (no operacionales, impuestos, etc.)
         utilidad_neta_antes_impuestos = utilidad_operacional
 
         return Response({
@@ -460,16 +691,20 @@ class BalanceGeneralView(views.APIView):
         from decimal import Decimal
 
         fecha_fin = request.query_params.get('fecha_fin')
+        empresa_id = request.query_params.get('empresa')
         if not fecha_fin:
             return Response({"error": "Debe proporcionar una 'fecha_fin' en los parámetros."}, status=400)
 
         # Función auxiliar para calcular el saldo de una clase de cuenta
         def calcular_saldo_clase(clase):
-            movimientos = MovimientoContable.objects.filter(
+            qs = MovimientoContable.objects.filter(
                 asiento__fecha__lte=fecha_fin,
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=str(clase)
             )
-            saldo = movimientos.aggregate(
+            if empresa_id:
+                qs = qs.filter(asiento__empresa_id=empresa_id)
+            saldo = qs.aggregate(
                 total_debito=Sum('debito', default=Decimal(0)),
                 total_credito=Sum('credito', default=Decimal(0))
             )
@@ -819,7 +1054,7 @@ class EstadoSituacionFinancieraView(views.APIView):
             result = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
                 asiento__fecha__lte=fecha_corte,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -848,7 +1083,7 @@ class EstadoSituacionFinancieraView(views.APIView):
         
         # ACTIVOS (Clase 1)
         activos_detalle = detalle_clase(1)
-        total_activos = sum(a['saldo'] for a in activos_detalle)
+        total_activos = sum((Decimal(str(a['saldo'])) for a in activos_detalle), Decimal('0'))
         
         # Clasificación corriente/no corriente (simplificada)
         activos_corrientes = []
@@ -861,7 +1096,7 @@ class EstadoSituacionFinancieraView(views.APIView):
         
         # PASIVOS (Clase 2)
         pasivos_detalle = detalle_clase(2)
-        total_pasivos = sum(p['saldo'] for p in pasivos_detalle)
+        total_pasivos = sum((Decimal(str(p['saldo'])) for p in pasivos_detalle), Decimal('0'))
         
         # Clasificación corriente/no corriente
         pasivos_corrientes = []
@@ -874,7 +1109,7 @@ class EstadoSituacionFinancieraView(views.APIView):
         
         # PATRIMONIO (Clase 3)
         patrimonio_detalle = detalle_clase(3)
-        total_patrimonio_base = sum(p['saldo'] for p in patrimonio_detalle)
+        total_patrimonio_base = sum((Decimal(str(p['saldo'])) for p in patrimonio_detalle), Decimal('0'))
         
         # Resultado del ejercicio (Ingresos - Gastos - Costos)
         ingresos = saldo_cuenta('4') * -1  # Naturaleza crédito
@@ -885,7 +1120,7 @@ class EstadoSituacionFinancieraView(views.APIView):
         total_patrimonio = total_patrimonio_base + resultado_ejercicio
         
         # Verificación ecuación contable
-        ecuacion_ok = abs(total_activos - (total_pasivos + total_patrimonio)) < 1
+        ecuacion_ok = abs(float(total_activos) - float(total_pasivos + total_patrimonio)) < 1
         
         return Response({
             'empresa': {
@@ -899,25 +1134,25 @@ class EstadoSituacionFinancieraView(views.APIView):
             'activos': {
                 'corrientes': {
                     'detalle': activos_corrientes,
-                    'total': sum(a['saldo'] for a in activos_corrientes),
+                    'total': float(sum((a['saldo'] for a in activos_corrientes), 0)),
                 },
                 'no_corrientes': {
                     'detalle': activos_no_corrientes,
-                    'total': sum(a['saldo'] for a in activos_no_corrientes),
+                    'total': float(sum((a['saldo'] for a in activos_no_corrientes), 0)),
                 },
-                'total': total_activos,
+                'total': float(total_activos),
             },
             
             'pasivos': {
                 'corrientes': {
                     'detalle': pasivos_corrientes,
-                    'total': sum(p['saldo'] for p in pasivos_corrientes),
+                    'total': float(sum((p['saldo'] for p in pasivos_corrientes), 0)),
                 },
                 'no_corrientes': {
                     'detalle': pasivos_no_corrientes,
-                    'total': sum(p['saldo'] for p in pasivos_no_corrientes),
+                    'total': float(sum((p['saldo'] for p in pasivos_no_corrientes), 0)),
                 },
-                'total': total_pasivos,
+                'total': float(total_pasivos),
             },
             
             'patrimonio': {
@@ -960,7 +1195,7 @@ class EstadoResultadosIntegralView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -982,7 +1217,7 @@ class EstadoResultadosIntegralView(views.APIView):
                     asiento__empresa=empresa,
                     asiento__fecha__gte=fecha_inicio,
                     asiento__fecha__lte=fecha_fin,
-                    asiento__estado='activo',
+                    asiento__estado='vigente',
                     cuenta__codigo__startswith=cuenta.codigo
                 ).aggregate(
                     debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1118,7 +1353,7 @@ class EstadoCambiosPatrimonioView(views.APIView):
             inicial = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
                 asiento__fecha__lt=fecha_inicio,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=codigo
             ).aggregate(
                 debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1131,7 +1366,7 @@ class EstadoCambiosPatrimonioView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=codigo
             ).aggregate(
                 debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1159,7 +1394,7 @@ class EstadoCambiosPatrimonioView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='4'
         ).aggregate(
             debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1169,7 +1404,7 @@ class EstadoCambiosPatrimonioView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='5'
         ).aggregate(
             debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1179,7 +1414,7 @@ class EstadoCambiosPatrimonioView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='6'
         ).aggregate(
             debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1244,7 +1479,7 @@ class EstadoFlujosEfectivoView(views.APIView):
             saldo_inicial = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
                 asiento__fecha__lt=fecha_ini,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1254,7 +1489,7 @@ class EstadoFlujosEfectivoView(views.APIView):
             saldo_final = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
                 asiento__fecha__lte=fecha_corte,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 debitos=Coalesce(Sum('debito'), Decimal('0')),
@@ -1270,7 +1505,7 @@ class EstadoFlujosEfectivoView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='4'
         ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
         
@@ -1278,7 +1513,7 @@ class EstadoFlujosEfectivoView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='5'
         ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
         
@@ -1286,7 +1521,7 @@ class EstadoFlujosEfectivoView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='6'
         ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
         
@@ -1326,7 +1561,7 @@ class EstadoFlujosEfectivoView(views.APIView):
         efectivo_inicial = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__fecha__lt=fecha_inicio,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='11'
         ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
         
@@ -1561,7 +1796,7 @@ class MediosMagneticosView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__regex=r'^[56]'
         ).select_related('asiento__tercero', 'cuenta')
         
@@ -1582,7 +1817,7 @@ class MediosMagneticosView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='2365'
         ).select_related('asiento__tercero')
         
@@ -1649,7 +1884,7 @@ class MediosMagneticosView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='1355'
         ).select_related('asiento__tercero')
         
@@ -1713,7 +1948,7 @@ class MediosMagneticosView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='2408',
             debito__gt=0
         ).select_related('asiento__tercero')
@@ -1775,7 +2010,7 @@ class MediosMagneticosView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='2408',
             credito__gt=0
         ).select_related('asiento__tercero')
@@ -1836,7 +2071,7 @@ class MediosMagneticosView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='4',
             credito__gt=0
         ).select_related('asiento__tercero')
@@ -1896,7 +2131,7 @@ class MediosMagneticosView(views.APIView):
         saldos = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__fecha__lte=fecha_corte,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='13'
         ).values('asiento__tercero').annotate(
             total_debito=Coalesce(Sum('debito'), Decimal('0')),
@@ -1962,7 +2197,7 @@ class MediosMagneticosView(views.APIView):
         saldos = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__fecha__lte=fecha_corte,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__regex=r'^2[23]'
         ).values('asiento__tercero').annotate(
             total_debito=Coalesce(Sum('debito'), Decimal('0')),
@@ -2027,7 +2262,7 @@ class MediosMagneticosView(views.APIView):
         saldos = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__fecha__lte=fecha_corte,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__regex=r'^1[12]'
         ).values('asiento__tercero', 'cuenta__codigo').annotate(
             total_debito=Coalesce(Sum('debito'), Decimal('0')),
@@ -2119,7 +2354,7 @@ class MediosMagneticosView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 asiento__tercero=empleado,
                 cuenta__codigo__startswith='51',
                 debito__gt=0
@@ -2279,7 +2514,7 @@ class CertificadosTributariosView(views.APIView):
             asiento__tercero=tercero,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='2365',
             credito__gt=0
         ).values('cuenta__codigo', 'cuenta__nombre').annotate(
@@ -2292,7 +2527,7 @@ class CertificadosTributariosView(views.APIView):
             asiento__tercero=tercero,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__regex=r'^[56]',
             debito__gt=0
         ).aggregate(total=Coalesce(Sum('debito'), Decimal('0')))['total']
@@ -2432,7 +2667,7 @@ class CertificadosTributariosView(views.APIView):
             asiento__tercero=tercero,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__regex=r'^236[78]',
             credito__gt=0
         ).aggregate(total=Coalesce(Sum('credito'), Decimal('0')))['total']
@@ -2443,7 +2678,7 @@ class CertificadosTributariosView(views.APIView):
             asiento__tercero=tercero,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='2408',
             debito__gt=0
         ).aggregate(total=Coalesce(Sum('debito'), Decimal('0')))['total']
@@ -2550,7 +2785,7 @@ class CertificadosTributariosView(views.APIView):
             asiento__tercero=tercero,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='51',
             debito__gt=0
         )
@@ -2586,7 +2821,7 @@ class CertificadosTributariosView(views.APIView):
             asiento__tercero=tercero,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='2365',
             credito__gt=0
         ).aggregate(total=Coalesce(Sum('credito'), Decimal('0')))['total']
@@ -2840,7 +3075,7 @@ class IniciarConciliacionView(views.APIView):
         saldos = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__fecha__lte=fecha_corte,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta=cuenta
         ).aggregate(
             total_d=Sum('debito'),
@@ -3014,7 +3249,7 @@ class ComparativoView(views.APIView):
             asiento__empresa=conc.empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta=conc.cuenta
         ).select_related('asiento')
         
@@ -3104,7 +3339,7 @@ class ConciliacionAutomaticaView(views.APIView):
             asiento__empresa=conc.empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta=conc.cuenta
         ).exclude(id__in=conc_ids))
         
@@ -3617,7 +3852,7 @@ class GenerarNotasAutomaticasView(views.APIView):
             movs = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
                 asiento__fecha__lte=fecha_corte,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 total_d=Coalesce(Sum('debito'), Decimal('0')),
@@ -4069,7 +4304,7 @@ class IndicadoresFinancierosView(views.APIView):
             movs = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
                 asiento__fecha__lte=fecha_corte,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 d=Coalesce(Sum('debito'), Decimal('0')),
@@ -4100,7 +4335,7 @@ class IndicadoresFinancierosView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 d=Coalesce(Sum('debito'), Decimal('0')),
@@ -4537,7 +4772,7 @@ class DashboardDataView(views.APIView):
             movs = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
                 asiento__fecha__lte=fecha_corte,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 d=Coalesce(Sum('debito'), Decimal('0')),
@@ -4564,7 +4799,7 @@ class DashboardDataView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=prefijo
             ).aggregate(
                 d=Coalesce(Sum('debito'), Decimal('0')),
@@ -4661,7 +4896,7 @@ class DashboardDataView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=inicio,
                 asiento__fecha__lte=fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith='41'
             ).aggregate(
                 total=Coalesce(Sum('credito'), Decimal('0')) - Coalesce(Sum('debito'), Decimal('0'))
@@ -4681,7 +4916,7 @@ class DashboardDataView(views.APIView):
         # Agrupar por tercero en cuentas por cobrar (13xx)
         cartera = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='13'
         ).values(
             'asiento__tercero__nombre_razon_social',  
@@ -4722,7 +4957,7 @@ class DashboardDataView(views.APIView):
         # Últimos asientos
         asientos = AsientoContable.objects.filter(
             empresa=empresa,
-            estado='activo'
+            estado='vigente'
         ).order_by('-fecha', '-id')[:limite]
         
         movimientos = []
@@ -4976,7 +5211,7 @@ class PreviewCierreView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=clase
             ).aggregate(
                 d=Coalesce(Sum('debito'), Decimal('0')),
@@ -5001,7 +5236,7 @@ class PreviewCierreView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=clase
             ).values(
                 'cuenta__codigo',
@@ -5102,7 +5337,7 @@ class EjecutarCierreView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_ini,
                 asiento__fecha__lte=fecha_f,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo=codigo_cuenta
             ).aggregate(
                 d=Coalesce(Sum('debito'), Decimal('0')),
@@ -5115,7 +5350,7 @@ class EjecutarCierreView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=clase
             ).aggregate(
                 d=Coalesce(Sum('debito'), Decimal('0')),
@@ -5146,7 +5381,7 @@ class EjecutarCierreView(views.APIView):
             fecha=fecha_fin,
             tipo='cierre',
             descripcion=descripcion,
-            estado='activo'
+            estado='vigente'
         )
         
         movimientos_creados = []
@@ -5156,7 +5391,7 @@ class EjecutarCierreView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith__in=['4', '5', '6']
         ).values('cuenta').annotate(
             total_d=Sum('debito'),
@@ -5169,7 +5404,7 @@ class EjecutarCierreView(views.APIView):
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
             asiento__fecha__lte=fecha_fin,
-            asiento__estado='activo',
+            asiento__estado='vigente',
             cuenta__codigo__startswith='4'
         ).values('cuenta__codigo').annotate(
             total_d=Coalesce(Sum('debito'), Decimal('0')),
@@ -5195,7 +5430,7 @@ class EjecutarCierreView(views.APIView):
                 asiento__empresa=empresa,
                 asiento__fecha__gte=fecha_inicio,
                 asiento__fecha__lte=fecha_fin,
-                asiento__estado='activo',
+                asiento__estado='vigente',
                 cuenta__codigo__startswith=clase
             ).values('cuenta__codigo').annotate(
                 total_d=Coalesce(Sum('debito'), Decimal('0')),

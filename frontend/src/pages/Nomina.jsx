@@ -2,7 +2,8 @@
 import React, { useState, useMemo } from "react";
 import {
   Users, Plus, Edit2, Trash2, DollarSign, CheckCircle, Eye, X,
-  ChevronDown, ChevronUp, Calculator, Briefcase, AlertCircle
+  ChevronDown, ChevronUp, Calculator, Briefcase, AlertCircle,
+  FileDown, Upload,
 } from "lucide-react";
 import { useEmpresa } from "../context/EmpresaContext";
 import { useTerceros } from "../hooks/useTerceros";
@@ -11,6 +12,7 @@ import {
   useNominas, useCreateNomina, useLiquidarNomina, usePagarNomina, useDeleteNomina,
   useParametrosNomina,
 } from "../hooks/useNomina";
+import { descargarComprobantePDF, importarEmpleados } from "../services/api";
 
 const MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
@@ -54,6 +56,13 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
     caja_compensacion: empleado?.caja_compensacion || "",
     arl_nombre: empleado?.arl_nombre || "",
     centro_costo: empleado?.centro_costo || "",
+    trabajo_remoto: empleado?.trabajo_remoto || false,
+    // Retención en la fuente
+    tiene_dependientes: empleado?.tiene_dependientes || false,
+    deduccion_vivienda: empleado?.deduccion_vivienda || "0",
+    deduccion_medicina_prepagada: empleado?.deduccion_medicina_prepagada || "0",
+    aportes_voluntarios_pension: empleado?.aportes_voluntarios_pension || "0",
+    aportes_afc: empleado?.aportes_afc || "0",
   });
   const [saving, setSaving] = useState(false);
 
@@ -67,6 +76,10 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
         salario_base: Number(form.salario_base),
         nivel_arl: Number(form.nivel_arl),
         tercero: Number(form.tercero),
+        deduccion_vivienda: Number(form.deduccion_vivienda) || 0,
+        deduccion_medicina_prepagada: Number(form.deduccion_medicina_prepagada) || 0,
+        aportes_voluntarios_pension: Number(form.aportes_voluntarios_pension) || 0,
+        aportes_afc: Number(form.aportes_afc) || 0,
       };
       if (isEdit) {
         await onUpdate({ id: empleado.id, ...payload });
@@ -133,12 +146,18 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
                 {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>Nivel {n}</option>)}
               </select>
             </Field>
-            <div className="flex items-end pb-2">
+            <div className="flex items-end pb-2 gap-6">
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={form.salario_integral}
                   onChange={e => setForm(f => ({ ...f, salario_integral: e.target.checked }))}
                   className="rounded border-gray-300" />
                 Salario integral
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={form.trabajo_remoto}
+                  onChange={e => setForm(f => ({ ...f, trabajo_remoto: e.target.checked }))}
+                  className="rounded border-gray-300" />
+                Trabajo remoto (sin aux. transporte)
               </label>
             </div>
           </div>
@@ -154,6 +173,30 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
           </div>
 
           <Field label="Centro de costo" name="centro_costo" placeholder="Ej: Administración" />
+
+          {/* Retención en la fuente */}
+          <div className="border-t pt-4 mt-2">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              💰 Retención en la Fuente (Art. 383 ET)
+            </h3>
+            <div className="flex items-center gap-2 mb-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={form.tiene_dependientes}
+                  onChange={e => setForm(f => ({ ...f, tiene_dependientes: e.target.checked }))}
+                  className="rounded border-gray-300" />
+                Tiene dependientes (10% ingreso, máx 32 UVT)
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Intereses vivienda / mes" name="deduccion_vivienda" type="number" min="0" placeholder="0" />
+              <Field label="Medicina prepagada / mes" name="deduccion_medicina_prepagada" type="number" min="0" placeholder="0" />
+            </div>
+            <div className="grid grid-cols-2 gap-4 mt-3">
+              <Field label="Aporte vol. pensión / mes" name="aportes_voluntarios_pension" type="number" min="0" placeholder="0" />
+              <Field label="Aporte AFC / mes" name="aportes_afc" type="number" min="0" placeholder="0" />
+            </div>
+            <p className="text-xs text-gray-400 mt-2">Estos valores se usan para depurar la base de retención. Si no aplican, dejar en 0.</p>
+          </div>
 
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 py-2 border rounded-lg hover:bg-gray-50 text-sm">
@@ -466,10 +509,27 @@ export default function Nomina() {
           <div className="flex items-center justify-between p-4 border-b">
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Buscar empleado..." className="border rounded-lg px-3 py-2 text-sm w-64" />
-            <button onClick={() => { setEditEmp(null); setShowEmpModal(true); }}
-              className="flex items-center gap-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
-              <Plus size={16} /> Nuevo Empleado
-            </button>
+            <div className="flex gap-2">
+              <label className="flex items-center gap-1 px-3 py-2 border border-green-300 text-green-700 rounded-lg text-sm cursor-pointer hover:bg-green-50">
+                <Upload size={16} /> Importar Excel
+                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const res = await importarEmpleados(empresaId, file);
+                    alert(res.mensaje);
+                    window.location.reload();
+                  } catch (err) {
+                    alert("Error: " + (err.response?.data?.error || err.message));
+                  }
+                  e.target.value = '';
+                }} />
+              </label>
+              <button onClick={() => { setEditEmp(null); setShowEmpModal(true); }}
+                className="flex items-center gap-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+                <Plus size={16} /> Nuevo Empleado
+              </button>
+            </div>
           </div>
           {loadEmp ? (
             <div className="p-8 text-center text-gray-400">Cargando...</div>
@@ -594,6 +654,9 @@ export default function Nomina() {
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge color={estadoColor[nom.estado]}>{nom.estado_display}</Badge>
+                        {nom.asiento_numero && (
+                          <Badge color="indigo">📒 Asiento {nom.asiento_numero}</Badge>
+                        )}
                         {nom.estado === "borrador" && (
                           <>
                             <button onClick={e => { e.stopPropagation(); setShowNovedades(nom.id); }}
@@ -649,10 +712,16 @@ export default function Nomina() {
                                 <td className="px-2 py-2 text-right font-mono font-semibold">{peso(liq.neto_pagar)}</td>
                                 <td className="px-2 py-2 text-right font-mono text-gray-500">{peso(liq.costo_empresa)}</td>
                                 <td className="px-2 py-2 text-center">
-                                  <button onClick={() => setShowLiqDetail(liq)}
-                                    className="p-1 hover:bg-indigo-50 rounded text-indigo-600" title="Ver detalle">
-                                    <Eye size={16} />
-                                  </button>
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button onClick={() => setShowLiqDetail(liq)}
+                                      className="p-1 hover:bg-indigo-50 rounded text-indigo-600" title="Ver detalle">
+                                      <Eye size={16} />
+                                    </button>
+                                    <button onClick={() => descargarComprobantePDF(liq.id)}
+                                      className="p-1 hover:bg-red-50 rounded text-red-600" title="Descargar PDF">
+                                      <FileDown size={16} />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}
