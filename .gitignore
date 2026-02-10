@@ -1,2 +1,48 @@
+# ═══════════════════════════════════════════
+# 🎩 Don Peppini Contadore — .gitignore
+# ═══════════════════════════════════════════
+
+# ─── Python ───
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ─── Django ───
+*.sqlite3
+db.sqlite3
+backend/staticfiles/
+backend/media/
+*.log
+
+# ─── Entorno virtual ───
+venv/
+env/
+.venv/
+.env
+
+# ─── Node / React / Vite ───
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ─── IDE ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS ───
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# ─── Temporal ───
+*.tmp
+*.bak

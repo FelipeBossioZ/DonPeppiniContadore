@@ -28,6 +28,20 @@ export default function Dashboard() {
     }
   }, [empresaId]);
 
+  // Logo empresa
+  const [logoUrl, setLogoUrl] = useState(null);
+  useEffect(() => {
+    let currentUrl = null;
+    if (empresaId) {
+      getLogoBlob(empresaId)
+        .then(url => { currentUrl = url; setLogoUrl(url); })
+        .catch(() => setLogoUrl(null));
+    } else {
+      setLogoUrl(null);
+    }
+    return () => { if (currentUrl) URL.revokeObjectURL(currentUrl); };
+  }, [empresaId]);
+
   const cargarDatos = async () => {
     setLoading(true);
     setError(null);
@@ -120,21 +134,16 @@ export default function Dashboard() {
 
   const d = datos || {};
 
-  // Logo empresa
-  const [logoUrl, setLogoUrl] = useState(null);
-  useEffect(() => {
-    if (empresaId) {
-      getLogoBlob(empresaId).then(url => setLogoUrl(url)).catch(() => setLogoUrl(null));
-    }
-  }, [empresaId]);
-
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       await uploadLogo(empresaId, file);
-      const url = await getLogoBlob(empresaId);
-      setLogoUrl(url);
+      // Revocar blob anterior si existe
+      if (logoUrl) URL.revokeObjectURL(logoUrl);
+      // Cache bust: crear blob directo del file local en vez de re-descargar
+      const localUrl = URL.createObjectURL(file);
+      setLogoUrl(localUrl);
     } catch (err) {
       alert("Error subiendo logo: " + (err.response?.data?.error || err.message));
     }
@@ -145,6 +154,7 @@ export default function Dashboard() {
     if (!confirm("¿Eliminar el logo de la empresa?")) return;
     try {
       await deleteLogo(empresaId);
+      if (logoUrl) URL.revokeObjectURL(logoUrl);
       setLogoUrl(null);
     } catch (err) { console.error(err); }
   };
