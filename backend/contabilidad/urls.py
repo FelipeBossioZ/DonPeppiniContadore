@@ -52,6 +52,17 @@ from .views import (
     SeedRetencionesView,
     ImportDIANPreviewView,
     ImportDIANExecuteView,
+    #Auditoría Interna
+    AuditoriaBitacoraView,
+    AuditoriaAnulacionesView,
+    AuditoriaNumeracionView,
+    AuditoriaSaldosContrariosView,
+    AuditoriaDuplicadosView,
+    AuditoriaMontosInusualesView,
+    AuditoriaSinSoporteView,
+    AuditoriaConcentracionTercerosView,
+    AuditoriaComparativoMensualView,
+    AuditoriaResumenView,
 )
 
 router = DefaultRouter()
@@ -117,4 +128,16 @@ urlpatterns = [
     path('retenciones/seed/', SeedRetencionesView.as_view()),
     path('importar-dian/preview/', ImportDIANPreviewView.as_view()),
     path('importar-dian/ejecutar/', ImportDIANExecuteView.as_view()),
+
+    # Auditoría Interna
+    path('auditoria/resumen/', AuditoriaResumenView.as_view()),
+    path('auditoria/bitacora/', AuditoriaBitacoraView.as_view()),
+    path('auditoria/anulaciones/', AuditoriaAnulacionesView.as_view()),
+    path('auditoria/numeracion/', AuditoriaNumeracionView.as_view()),
+    path('auditoria/saldos-contrarios/', AuditoriaSaldosContrariosView.as_view()),
+    path('auditoria/duplicados/', AuditoriaDuplicadosView.as_view()),
+    path('auditoria/montos-inusuales/', AuditoriaMontosInusualesView.as_view()),
+    path('auditoria/sin-soporte/', AuditoriaSinSoporteView.as_view()),
+    path('auditoria/concentracion-terceros/', AuditoriaConcentracionTercerosView.as_view()),
+    path('auditoria/comparativo-mensual/', AuditoriaComparativoMensualView.as_view()),
 ]

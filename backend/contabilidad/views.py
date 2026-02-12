@@ -6,7 +6,8 @@ from rest_framework.response import Response
 #from .models import Cuenta, AsientoContable, MovimientoContable, 
 from .models import (
     Cuenta, CuentaBase, AsientoContable, MovimientoContable, 
-    PeriodoContable, NotaEstadoFinanciero, CierreContable, ConceptoRetencion
+    PeriodoContable, NotaEstadoFinanciero, CierreContable, ConceptoRetencion,
+    BitacoraAuditoria
 )
 from .serializers import CuentaSerializer, AsientoContableSerializer, MovimientoContableSerializer
 from django.utils import timezone
@@ -18,8 +19,28 @@ from rest_framework import status
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment, Font
+
+
+def _get_client_ip(request):
+    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    return xff.split(',')[0].strip() if xff else request.META.get('REMOTE_ADDR')
+
+
+def _log_auditoria(request, empresa, accion, detalle="", asiento=None, asiento_relacionado=None):
+    try:
+        BitacoraAuditoria.objects.create(
+            empresa=empresa,
+            usuario=request.user if request.user.is_authenticated else None,
+            accion=accion,
+            detalle=detalle,
+            asiento=asiento,
+            asiento_relacionado=asiento_relacionado,
+            ip_address=_get_client_ip(request),
+        )
+    except Exception:
+        pass  # Nunca bloquear operación contable por fallo de log
 from django.http import HttpResponse
-from django.db.models import Sum
+from django.db.models import Sum, Q, Count, Avg, StdDev, F
 from decimal import Decimal
 from datetime import datetime
 from rest_framework.decorators import api_view, permission_classes
@@ -144,7 +165,16 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
             except:
                 pass
         
-        return super().create(request, *args, **kwargs)
+        response = super().create(request, *args, **kwargs)
+        if response.status_code == 201:
+            try:
+                asiento_id = response.data.get('id')
+                asiento = AsientoContable.objects.get(id=asiento_id)
+                _log_auditoria(request, asiento.empresa, 'crear_asiento',
+                    f"Asiento #{asiento.numero} - {asiento.concepto}", asiento=asiento)
+            except Exception:
+                pass
+        return response
 
     @action(detail=True, methods=["post"], url_path="anular")
     def anular(self, request, pk=None):
@@ -191,7 +221,10 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
 
         # Crear asiento de ajuste (inverso) y marcar anulado
         ajuste = AsientoContable.objects.create(
+            empresa=asiento.empresa,
             fecha=hoy,
+            fiscal_year=asiento.fiscal_year,
+            fiscal_period=asiento.fiscal_period,
             concepto=f"AJUSTE POR ANULACIÓN del asiento #{asiento.id}",
             tercero=asiento.tercero,
             descripcion_adicional=f"Motivo: {motivo}",
@@ -200,6 +233,7 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
             MovimientoContable.objects.create(
                 asiento=ajuste,
                 cuenta=m.cuenta,
+                tercero=m.tercero,
                 debito=m.credito,
                 credito=m.debito,
             )
@@ -210,6 +244,13 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
         asiento.anulacion_motivo = motivo
         asiento.ajusta_a = ajuste
         asiento.save()
+
+        # Determinar si es corrección rápida o anulación simple
+        es_correccion = "Corrección rápida" in motivo
+        accion = 'corregir_asiento' if es_correccion else 'anular_asiento'
+        _log_auditoria(request, asiento.empresa, accion,
+            f"Asiento #{asiento.numero} anulado. Motivo: {motivo}. Ajuste: #{ajuste.numero}",
+            asiento=asiento, asiento_relacionado=ajuste)
 
         return Response({"detail": "Asiento anulado y ajuste generado", "ajuste_id": ajuste.id}, status=200)
 
@@ -4985,7 +5026,7 @@ class DashboardDataView(views.APIView):
         ).order_by('mes_trunc')
         
         # Mapear resultados
-        datos_mes = {r['mes_trunc'].date(): float(r['total']) for r in raw}
+        datos_mes = {r['mes_trunc']: float(r['total']) for r in raw}
         
         tendencia = []
         for i in range(meses - 1, -1, -1):
@@ -6260,3 +6301,507 @@ class ImportDIANExecuteView(views.APIView):
                 activa=True,
             )
         return cuenta
+
+
+# ============================================================
+# 🔍 MÓDULO DE AUDITORÍA INTERNA
+# ============================================================
+
+class AuditoriaBitacoraView(views.APIView):
+    """Bitácora completa de acciones contables."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        fi = _parse_date(request.query_params.get('fecha_inicio'))
+        ff = _parse_date(request.query_params.get('fecha_fin'))
+        accion = request.query_params.get('accion')  # filtro opcional
+
+        qs = BitacoraAuditoria.objects.filter(empresa_id=empresa_id).select_related('usuario', 'asiento', 'asiento_relacionado')
+        if fi:
+            qs = qs.filter(fecha__date__gte=fi)
+        if ff:
+            qs = qs.filter(fecha__date__lte=ff)
+        if accion:
+            qs = qs.filter(accion=accion)
+
+        data = []
+        for b in qs[:500]:
+            data.append({
+                'id': b.id,
+                'fecha': b.fecha.isoformat(),
+                'usuario': b.usuario.username if b.usuario else 'Sistema',
+                'accion': b.accion,
+                'accion_display': b.get_accion_display(),
+                'detalle': b.detalle,
+                'asiento_id': b.asiento_id,
+                'asiento_numero': b.asiento.numero if b.asiento else None,
+                'asiento_relacionado_id': b.asiento_relacionado_id,
+                'asiento_relacionado_numero': b.asiento_relacionado.numero if b.asiento_relacionado else None,
+                'ip_address': b.ip_address,
+            })
+        return Response(data)
+
+
+class AuditoriaAnulacionesView(views.APIView):
+    """Reporte de todos los asientos anulados y corregidos."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        fi = _parse_date(request.query_params.get('fecha_inicio'))
+        ff = _parse_date(request.query_params.get('fecha_fin'))
+
+        qs = AsientoContable.objects.filter(
+            empresa_id=empresa_id, estado='anulado'
+        ).select_related('tercero', 'anulado_por', 'ajusta_a').order_by('-anulado_en')
+
+        if fi:
+            qs = qs.filter(fecha__gte=fi)
+        if ff:
+            qs = qs.filter(fecha__lte=ff)
+
+        data = []
+        for a in qs:
+            data.append({
+                'id': a.id,
+                'numero': a.numero,
+                'fecha_asiento': str(a.fecha),
+                'concepto': a.concepto,
+                'tercero': a.tercero.nombre_razon_social if a.tercero else None,
+                'anulado_por': a.anulado_por.username if a.anulado_por else 'N/A',
+                'anulado_en': a.anulado_en.isoformat() if a.anulado_en else None,
+                'motivo': a.anulacion_motivo or '',
+                'es_correccion': 'Corrección rápida' in (a.anulacion_motivo or ''),
+                'ajuste_id': a.ajusta_a_id,
+                'ajuste_numero': a.ajusta_a.numero if a.ajusta_a else None,
+                'total_debito': float(sum(m.debito for m in a.movimientos.all())),
+            })
+        return Response({
+            'total_anulaciones': len(data),
+            'total_correcciones': sum(1 for d in data if d['es_correccion']),
+            'registros': data,
+        })
+
+
+class AuditoriaNumeracionView(views.APIView):
+    """Detecta saltos en la numeración de asientos por año fiscal."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        anio = request.query_params.get('anio')
+
+        qs = AsientoContable.objects.filter(empresa_id=empresa_id)
+        if anio:
+            qs = qs.filter(fiscal_year=int(anio))
+
+        # Agrupar por año fiscal
+        from collections import defaultdict
+        por_anio = defaultdict(list)
+        for a in qs.values('fiscal_year', 'numero', 'id', 'estado').order_by('fiscal_year', 'numero'):
+            por_anio[a['fiscal_year']].append(a)
+
+        resultado = []
+        for year, asientos in sorted(por_anio.items()):
+            numeros = sorted(set(a['numero'] for a in asientos))
+            if not numeros:
+                continue
+            gaps = []
+            for i in range(len(numeros) - 1):
+                if numeros[i+1] - numeros[i] > 1:
+                    for missing in range(numeros[i]+1, numeros[i+1]):
+                        gaps.append(missing)
+            # Verificar si empieza en 1
+            if numeros[0] != 1:
+                for missing in range(1, numeros[0]):
+                    gaps.insert(0, missing)
+
+            duplicados = []
+            seen = set()
+            for n in [a['numero'] for a in asientos]:
+                if n in seen:
+                    duplicados.append(n)
+                seen.add(n)
+
+            resultado.append({
+                'anio': year,
+                'total_asientos': len(asientos),
+                'rango': f"{numeros[0]} - {numeros[-1]}",
+                'gaps': gaps[:50],  # limitar
+                'total_gaps': len(gaps),
+                'duplicados': list(set(duplicados)),
+                'total_duplicados': len(set(duplicados)),
+                'estado': 'OK' if not gaps and not duplicados else 'REVISAR',
+            })
+
+        return Response(resultado)
+
+
+class AuditoriaSaldosContrariosView(views.APIView):
+    """Cuentas con saldo contrario a su naturaleza."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Sum
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        ff = _parse_date(request.query_params.get('fecha_fin'))
+
+        cuentas = Cuenta.objects.filter(empresa_id=empresa_id, activa=True)
+        alertas = []
+
+        for c in cuentas:
+            movs = MovimientoContable.objects.filter(
+                cuenta=c, asiento__empresa_id=empresa_id, asiento__estado='vigente'
+            )
+            if ff:
+                movs = movs.filter(asiento__fecha__lte=ff)
+            agg = movs.aggregate(td=Sum('debito'), tc=Sum('credito'))
+            td = agg['td'] or Decimal('0')
+            tc = agg['tc'] or Decimal('0')
+            saldo = td - tc
+
+            # Verificar contra naturaleza
+            anormal = False
+            if c.naturaleza == 'debito' and saldo < 0:
+                anormal = True
+            elif c.naturaleza == 'credito' and saldo > 0:
+                anormal = True
+
+            if anormal and abs(saldo) > Decimal('0.01'):
+                alertas.append({
+                    'cuenta_codigo': c.codigo,
+                    'cuenta_nombre': c.nombre,
+                    'naturaleza': c.naturaleza,
+                    'saldo': float(saldo),
+                    'esperado': 'Débito (+)' if c.naturaleza == 'debito' else 'Crédito (-)',
+                    'encontrado': 'Crédito (-)' if saldo < 0 else 'Débito (+)',
+                    'severidad': 'alta' if abs(saldo) > 1000000 else 'media',
+                })
+
+        return Response({
+            'total_alertas': len(alertas),
+            'alertas': sorted(alertas, key=lambda x: abs(x['saldo']), reverse=True),
+        })
+
+
+class AuditoriaDuplicadosView(views.APIView):
+    """Detecta asientos potencialmente duplicados."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Count
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        fi = _parse_date(request.query_params.get('fecha_inicio'))
+        ff = _parse_date(request.query_params.get('fecha_fin'))
+
+        qs = AsientoContable.objects.filter(
+            empresa_id=empresa_id, estado='vigente'
+        ).prefetch_related('movimientos')
+        if fi:
+            qs = qs.filter(fecha__gte=fi)
+        if ff:
+            qs = qs.filter(fecha__lte=ff)
+
+        # Agrupar por (tercero, fecha, total_debito) → posibles duplicados
+        from collections import defaultdict
+        grupos = defaultdict(list)
+        for a in qs.select_related('tercero'):
+            total_deb = sum(m.debito for m in a.movimientos.all())
+            key = (a.tercero_id, str(a.fecha), str(total_deb))
+            grupos[key].append({
+                'id': a.id,
+                'numero': a.numero,
+                'fecha': str(a.fecha),
+                'concepto': a.concepto,
+                'tercero': a.tercero.nombre_razon_social if a.tercero else 'N/A',
+                'total_debito': float(total_deb),
+            })
+
+        duplicados = [
+            {'clave': f"{items[0]['tercero']} | {items[0]['fecha']} | ${items[0]['total_debito']:,.0f}",
+             'asientos': items}
+            for items in grupos.values() if len(items) > 1
+        ]
+
+        return Response({
+            'total_grupos': len(duplicados),
+            'duplicados': duplicados[:100],
+        })
+
+
+class AuditoriaMontosInusualesView(views.APIView):
+    """Movimientos con montos inusualmente altos vs promedio de la cuenta."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Avg, StdDev
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        umbral = float(request.query_params.get('umbral', 3))  # desviaciones estándar
+
+        # Estadísticas por cuenta
+        stats = MovimientoContable.objects.filter(
+            asiento__empresa_id=empresa_id, asiento__estado='vigente'
+        ).values('cuenta__codigo', 'cuenta__nombre').annotate(
+            avg_deb=Avg('debito'), std_deb=StdDev('debito'),
+            avg_cre=Avg('credito'), std_cre=StdDev('credito'),
+            total=Count('id'),
+        ).filter(total__gte=5)  # solo cuentas con suficientes datos
+
+        alertas = []
+        for s in stats:
+            if not s['std_deb'] and not s['std_cre']:
+                continue
+            # Buscar movimientos que excedan umbral * std
+            movs = MovimientoContable.objects.filter(
+                asiento__empresa_id=empresa_id, asiento__estado='vigente',
+                cuenta__codigo=s['cuenta__codigo']
+            ).select_related('asiento', 'asiento__tercero')
+
+            for m in movs:
+                inusual = False
+                monto = float(m.debito) if m.debito > 0 else float(m.credito)
+                tipo = 'débito' if m.debito > 0 else 'crédito'
+                avg = float(s['avg_deb'] or 0) if m.debito > 0 else float(s['avg_cre'] or 0)
+                std = float(s['std_deb'] or 0) if m.debito > 0 else float(s['std_cre'] or 0)
+                if std > 0 and monto > avg + (umbral * std):
+                    inusual = True
+                if inusual:
+                    alertas.append({
+                        'cuenta': s['cuenta__codigo'],
+                        'cuenta_nombre': s['cuenta__nombre'],
+                        'asiento_id': m.asiento.id,
+                        'asiento_numero': m.asiento.numero,
+                        'fecha': str(m.asiento.fecha),
+                        'tercero': m.asiento.tercero.nombre_razon_social if m.asiento.tercero else 'N/A',
+                        'tipo': tipo,
+                        'monto': monto,
+                        'promedio': round(avg, 2),
+                        'desviaciones': round((monto - avg) / std, 1) if std > 0 else 0,
+                    })
+
+        return Response({
+            'umbral_desviaciones': umbral,
+            'total_alertas': len(alertas),
+            'alertas': sorted(alertas, key=lambda x: x['desviaciones'], reverse=True)[:100],
+        })
+
+
+class AuditoriaSinSoporteView(views.APIView):
+    """Asientos sin descripción adicional (posible falta de soporte)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        fi = _parse_date(request.query_params.get('fecha_inicio'))
+        ff = _parse_date(request.query_params.get('fecha_fin'))
+
+        qs = AsientoContable.objects.filter(
+            empresa_id=empresa_id, estado='vigente'
+        ).filter(
+            Q(descripcion_adicional__isnull=True) |
+            Q(descripcion_adicional='')
+        ).select_related('tercero')
+
+        if fi:
+            qs = qs.filter(fecha__gte=fi)
+        if ff:
+            qs = qs.filter(fecha__lte=ff)
+
+        total_empresa = AsientoContable.objects.filter(
+            empresa_id=empresa_id, estado='vigente'
+        ).count()
+
+        data = [{
+            'id': a.id, 'numero': a.numero, 'fecha': str(a.fecha),
+            'concepto': a.concepto,
+            'tercero': a.tercero.nombre_razon_social if a.tercero else 'N/A',
+            'total_debito': float(sum(m.debito for m in a.movimientos.all())),
+        } for a in qs[:200]]
+
+        return Response({
+            'total_sin_soporte': qs.count(),
+            'total_asientos': total_empresa,
+            'porcentaje': round(qs.count() / max(total_empresa, 1) * 100, 1),
+            'registros': data,
+        })
+
+
+class AuditoriaConcentracionTercerosView(views.APIView):
+    """Concentración de movimientos por tercero."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Sum, Count
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        fi = _parse_date(request.query_params.get('fecha_inicio'))
+        ff = _parse_date(request.query_params.get('fecha_fin'))
+
+        qs = AsientoContable.objects.filter(
+            empresa_id=empresa_id, estado='vigente'
+        )
+        if fi:
+            qs = qs.filter(fecha__gte=fi)
+        if ff:
+            qs = qs.filter(fecha__lte=ff)
+
+        total_asientos = qs.count()
+
+        concentracion = qs.values(
+            'tercero__numero_documento', 'tercero__nombre_razon_social'
+        ).annotate(
+            cantidad=Count('id'),
+            total_movido=Sum('movimientos__debito'),
+        ).order_by('-cantidad')[:20]
+
+        data = [{
+            'nit': c['tercero__numero_documento'],
+            'nombre': c['tercero__nombre_razon_social'],
+            'cantidad_asientos': c['cantidad'],
+            'porcentaje': round(c['cantidad'] / max(total_asientos, 1) * 100, 1),
+            'total_movido': float(c['total_movido'] or 0),
+        } for c in concentracion]
+
+        return Response({
+            'total_asientos_periodo': total_asientos,
+            'top_terceros': data,
+        })
+
+
+class AuditoriaComparativoMensualView(views.APIView):
+    """Comparativo mes a mes por cuenta — detecta variaciones abruptas."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Sum
+        empresa_id = request.query_params.get('empresa')
+        anio = int(request.query_params.get('anio', date.today().year))
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        cuentas = Cuenta.objects.filter(empresa_id=empresa_id, activa=True).order_by('codigo')
+        resultado = []
+
+        for c in cuentas:
+            meses = []
+            tiene_datos = False
+            for mes in range(1, 13):
+                agg = MovimientoContable.objects.filter(
+                    cuenta=c, asiento__empresa_id=empresa_id, asiento__estado='vigente',
+                    asiento__fecha__year=anio, asiento__fecha__month=mes,
+                ).aggregate(td=Sum('debito'), tc=Sum('credito'))
+                td = float(agg['td'] or 0)
+                tc = float(agg['tc'] or 0)
+                neto = td - tc
+                if td > 0 or tc > 0:
+                    tiene_datos = True
+                meses.append({'mes': mes, 'debito': td, 'credito': tc, 'neto': neto})
+
+            if not tiene_datos:
+                continue
+
+            # Detectar variaciones bruscas (>200% respecto al promedio)
+            netos = [m['neto'] for m in meses if m['neto'] != 0]
+            avg_neto = sum(abs(n) for n in netos) / max(len(netos), 1)
+            alertas_mes = []
+            for m in meses:
+                if avg_neto > 0 and abs(m['neto']) > avg_neto * 3:
+                    alertas_mes.append(m['mes'])
+
+            resultado.append({
+                'cuenta': c.codigo,
+                'nombre': c.nombre,
+                'meses': meses,
+                'alertas_mes': alertas_mes,
+            })
+
+        return Response({
+            'anio': anio,
+            'cuentas': resultado,
+        })
+
+
+class AuditoriaResumenView(views.APIView):
+    """Dashboard resumen de auditoría."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Count, Sum
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({"error": "Empresa requerida"}, status=400)
+
+        total_asientos = AsientoContable.objects.filter(empresa_id=empresa_id).count()
+        total_vigentes = AsientoContable.objects.filter(empresa_id=empresa_id, estado='vigente').count()
+        total_anulados = AsientoContable.objects.filter(empresa_id=empresa_id, estado='anulado').count()
+
+        # Correcciones rápidas
+        total_correcciones = AsientoContable.objects.filter(
+            empresa_id=empresa_id, estado='anulado',
+            anulacion_motivo__icontains='Corrección rápida'
+        ).count()
+
+        # Sin soporte
+        sin_soporte = AsientoContable.objects.filter(
+            empresa_id=empresa_id, estado='vigente'
+        ).filter(
+            Q(descripcion_adicional__isnull=True) | Q(descripcion_adicional='')
+        ).count()
+
+        # Saldos contrarios (simplificado)
+        saldos_contrarios = 0
+        cuentas = Cuenta.objects.filter(empresa_id=empresa_id, activa=True)
+        for c in cuentas:
+            agg = MovimientoContable.objects.filter(
+                cuenta=c, asiento__empresa_id=empresa_id, asiento__estado='vigente'
+            ).aggregate(td=Sum('debito'), tc=Sum('credito'))
+            saldo = (agg['td'] or 0) - (agg['tc'] or 0)
+            if c.naturaleza == 'debito' and saldo < -Decimal('0.01'):
+                saldos_contrarios += 1
+            elif c.naturaleza == 'credito' and saldo > Decimal('0.01'):
+                saldos_contrarios += 1
+
+        # Últimas acciones
+        ultimas = BitacoraAuditoria.objects.filter(
+            empresa_id=empresa_id
+        ).select_related('usuario')[:10]
+
+        return Response({
+            'total_asientos': total_asientos,
+            'vigentes': total_vigentes,
+            'anulados': total_anulados,
+            'correcciones_rapidas': total_correcciones,
+            'sin_soporte': sin_soporte,
+            'porcentaje_sin_soporte': round(sin_soporte / max(total_vigentes, 1) * 100, 1),
+            'saldos_contrarios': saldos_contrarios,
+            'ultimas_acciones': [{
+                'fecha': b.fecha.isoformat(),
+                'accion': b.get_accion_display(),
+                'detalle': b.detalle[:100],
+                'usuario': b.usuario.username if b.usuario else 'Sistema',
+            } for b in ultimas],
+        })
