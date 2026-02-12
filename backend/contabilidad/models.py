@@ -598,3 +598,26 @@ class CierreContable(models.Model):
         meses = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
                  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
         return f"{meses[self.mes]} {self.año}"
+
+
+class ConceptoRetencion(models.Model):
+    """Conceptos de retención en la fuente (Tabla CETA)"""
+    codigo = models.CharField(max_length=10, unique=True)
+    concepto_pago = models.CharField(max_length=200)
+    categoria = models.CharField(max_length=50, blank=True)  # compras, servicios, honorarios...
+    norma = models.CharField(max_length=100, blank=True)
+    base_minima_pesos = models.DecimalField(max_digits=18, decimal_places=0, default=0,
+        help_text="0 = aplica sobre 100% sin mínimo")
+    tarifa = models.DecimalField(max_digits=5, decimal_places=2,
+        help_text="Porcentaje. Ej: 2.5 para 2.5%")
+    cuenta_retencion = models.CharField(max_length=10, blank=True,
+        help_text="Código cuenta retención sugerida (ej: 236540)")
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['categoria', 'codigo']
+        verbose_name = "Concepto de Retención"
+        verbose_name_plural = "Conceptos de Retención"
+
+    def __str__(self):
+        return f"{self.concepto_pago} ({self.tarifa}%)"

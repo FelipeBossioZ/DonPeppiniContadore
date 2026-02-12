@@ -23,6 +23,7 @@ import BalanceTerceros from './pages/BalanceTerceros';
 import SimuladorRetencion from './pages/SimuladorRetencion';
 import LiquidacionContrato from './pages/LiquidacionContrato';
 import PrestacionesSociales from './pages/PrestacionesSociales';
+import ImportDIAN from './pages/ImportDIAN';
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children }) => {
@@ -48,6 +49,7 @@ function App() {
           <Route path="terceros" element={<TercerosPage />} />
           <Route path="contabilidad" element={<Contabilidad />} />
           <Route path="facturacion" element={<Facturacion />} />
+          <Route path="importar-dian" element={<ImportDIAN />} />
           <Route path="nomina" element={<Nomina />} />
           <Route path="reportes" element={<Reportes />} />
           <Route path="balance-terceros" element={<BalanceTerceros />} />

@@ -4,6 +4,8 @@ import { useState } from "react";
 import { toast } from "../ui/ToastHost";
 import {
   exportBalancePrueba,
+  exportLibroDiario,
+  exportLibroMayor,
 } from "../utils/exports";
 
 // Helpers de fecha

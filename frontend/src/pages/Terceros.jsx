@@ -89,6 +89,9 @@ const emptyForm = {
   codigo_departamento: "05",
   codigo_municipio: "001",
   codigo_pais: "169",
+  es_autoretenedor: false,
+  es_gran_contribuyente: false,
+  es_declarante: true,
 };
 
 export default function Terceros() {
@@ -124,6 +127,9 @@ export default function Terceros() {
         codigo_departamento: editing.codigo_departamento ?? "05",
         codigo_municipio: editing.codigo_municipio ?? "001",
         codigo_pais: editing.codigo_pais ?? "169",
+        es_autoretenedor: editing.es_autoretenedor ?? false,
+        es_gran_contribuyente: editing.es_gran_contribuyente ?? false,
+        es_declarante: editing.es_declarante ?? true,
       });
     } else {
       setForm(emptyForm);
@@ -388,6 +394,25 @@ export default function Terceros() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
                 <input type="email" className="border rounded-lg px-3 py-2 w-full text-sm" value={form.email} onChange={change("email")} />
               </div>
+            </div>
+
+            {/* Flags tributarios */}
+            <div className="flex gap-6 mt-3 pt-3 border-t">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.es_autoretenedor}
+                  onChange={(e) => setForm(f => ({ ...f, es_autoretenedor: e.target.checked }))} />
+                <span>Autoretenedor</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.es_gran_contribuyente}
+                  onChange={(e) => setForm(f => ({ ...f, es_gran_contribuyente: e.target.checked }))} />
+                <span>Gran Contribuyente</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.es_declarante}
+                  onChange={(e) => setForm(f => ({ ...f, es_declarante: e.target.checked }))} />
+                <span>Declarante de Renta</span>
+              </label>
             </div>
           </div>
 

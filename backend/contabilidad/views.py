@@ -6,7 +6,7 @@ from rest_framework.response import Response
 #from .models import Cuenta, AsientoContable, MovimientoContable, 
 from .models import (
     Cuenta, CuentaBase, AsientoContable, MovimientoContable, 
-    PeriodoContable, NotaEstadoFinanciero, CierreContable
+    PeriodoContable, NotaEstadoFinanciero, CierreContable, ConceptoRetencion
 )
 from .serializers import CuentaSerializer, AsientoContableSerializer, MovimientoContableSerializer
 from django.utils import timezone
@@ -31,7 +31,15 @@ from datetime import timedelta
 @permission_classes([IsAuthenticated])
 def periodo_view(request):
     anio = int(request.query_params.get('anio'))
-    p = PeriodoContable.ensure(anio)
+    empresa_id = request.query_params.get('empresa')
+    if not empresa_id:
+        return Response({"error": "Empresa requerida"}, status=400)
+    from empresas.models import Empresa
+    try:
+        empresa = Empresa.objects.get(id=empresa_id)
+    except Empresa.DoesNotExist:
+        return Response({"error": "Empresa no encontrada"}, status=404)
+    p = PeriodoContable.ensure(empresa, anio)
     return Response({
         "anio": p.anio,
         "estado": p.estado,
@@ -144,7 +152,7 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
         hoy = timezone.localdate()
         # Tomamos el año fiscal del asiento si existe, si no, el de la fecha
         anio_fiscal = asiento.fiscal_year or asiento.fecha.year
-        periodo = PeriodoContable.ensure(anio_fiscal)
+        periodo = PeriodoContable.ensure(asiento.empresa, anio_fiscal)
 
         # Estado del periodo
         if periodo.estado == "cerrado":
@@ -234,9 +242,34 @@ class LibroDiarioView(views.APIView):
                 'codigo_cuenta': m.cuenta.codigo,
                 'nombre_cuenta': m.cuenta.nombre,
                 'concepto': m.asiento.concepto,
+                'descripcion_adicional': m.asiento.descripcion_adicional or '',
                 'debito': m.debito,
                 'credito': m.credito,
             })
+
+        formato = request.query_params.get('formato', 'json')
+        if formato == 'xlsx':
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Libro Diario"
+            headers = ['Fecha', 'Asiento', 'Tercero', 'Cuenta', 'Nombre Cuenta', 'Concepto', 'Notas', 'Débito', 'Crédito']
+            ws.append(headers)
+            for h in range(1, len(headers)+1):
+                ws.cell(1, h).font = Font(bold=True)
+            for d in data:
+                ws.append([
+                    str(d['fecha']), d['asiento_id'], d['tercero'],
+                    d['codigo_cuenta'], d['nombre_cuenta'], d['concepto'],
+                    d['descripcion_adicional'],
+                    float(d['debito']), float(d['credito']),
+                ])
+            for col in range(1, len(headers)+1):
+                ws.column_dimensions[get_column_letter(col)].width = 16
+            resp = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            resp["Content-Disposition"] = 'attachment; filename="libro_diario.xlsx"'
+            wb.save(resp)
+            return resp
+
         return Response(data, status=200)
 
 
@@ -614,6 +647,33 @@ class LibroMayorView(views.APIView):
                 'credito': m.credito,
                 'saldo': saldo,
             })
+
+        formato = request.query_params.get('formato', 'json')
+        if formato == 'xlsx':
+            wb = Workbook()
+            ws = wb.active
+            ws.title = f"Libro Mayor {cuenta.codigo}"
+            ws.append([f"Cuenta: {cuenta.codigo} - {cuenta.nombre}"])
+            ws.append([f"Periodo: {fecha_inicio or 'Inicio'} a {fecha_fin or 'Fin'}"])
+            ws.append([f"Saldo Inicial: {float(saldo_inicial)}"])
+            ws.append([])
+            headers = ['Fecha', 'Asiento', 'Tercero', 'Concepto', 'Débito', 'Crédito', 'Saldo']
+            ws.append(headers)
+            for h in range(1, len(headers)+1):
+                ws.cell(5, h).font = Font(bold=True)
+            for d in detalle:
+                ws.append([
+                    str(d['fecha']), d['asiento_id'], d['tercero'], d['concepto'],
+                    float(d['debito']), float(d['credito']), float(d['saldo']),
+                ])
+            ws.append([])
+            ws.append(['', '', '', 'Saldo Final:', '', '', float(saldo)])
+            for col in range(1, len(headers)+1):
+                ws.column_dimensions[get_column_letter(col)].width = 16
+            resp = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            resp["Content-Disposition"] = f'attachment; filename="libro_mayor_{cuenta.codigo}.xlsx"'
+            wb.save(resp)
+            return resp
 
         return Response({
             'cuenta': {'codigo': cuenta.codigo, 'nombre': cuenta.nombre},
@@ -5733,3 +5793,467 @@ class ReabrirPeriodoView(views.APIView):
 #             }, status=400)
 #     
 #     return super().create(request, *args, **kwargs)
+
+# ====================================================================
+# 🎩 MÓDULO IMPORTACIÓN DIAN + RETENCIONES
+# ====================================================================
+
+from terceros.models import Tercero
+from empresas.models import Empresa
+from rest_framework.parsers import MultiPartParser, FormParser
+import json
+
+
+class ConceptoRetencionListView(views.APIView):
+    """Lista todos los conceptos de retención activos"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        conceptos = ConceptoRetencion.objects.filter(activo=True).values(
+            'id', 'codigo', 'concepto_pago', 'categoria', 'norma',
+            'base_minima_pesos', 'tarifa', 'cuenta_retencion'
+        )
+        return Response({'conceptos': list(conceptos)})
+
+
+class SeedRetencionesView(views.APIView):
+    """Carga/actualiza la tabla de retenciones CETA 2026"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        datos = [
+            # COMPRAS GENERALES
+            {'codigo': 'CG-D', 'concepto_pago': 'Compras generales - Declarantes', 'categoria': 'compras',
+             'norma': 'DUT 1.2.4.9.1 Inc.1 y Inc.4, lit.i', 'base_minima_pesos': 524000, 'tarifa': Decimal('2.5'),
+             'cuenta_retencion': '236540'},
+            {'codigo': 'CG-ND', 'concepto_pago': 'Compras generales - No declarantes', 'categoria': 'compras',
+             'norma': 'DUT 1.2.4.9.1 par.3 y inc.4, lit.i', 'base_minima_pesos': 524000, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236540'},
+            # COMPRAS AGRÍCOLAS
+            {'codigo': 'CA-SP', 'concepto_pago': 'Compras agrícolas sin procesamiento industrial', 'categoria': 'compras',
+             'norma': 'DUT 1.2.4.6.7 inc.1 y 2', 'base_minima_pesos': 3666000, 'tarifa': Decimal('1.5'),
+             'cuenta_retencion': '236540'},
+            {'codigo': 'CA-CP', 'concepto_pago': 'Compras agrícolas con procesamiento industrial', 'categoria': 'compras',
+             'norma': 'ET 401 Inc.3; DUT 1.2.4.9.1 inc.4', 'base_minima_pesos': 524000, 'tarifa': Decimal('2.5'),
+             'cuenta_retencion': '236540'},
+            # COMPRAS TARJETA
+            {'codigo': 'CT', 'concepto_pago': 'Compras con tarjeta débito y/o crédito', 'categoria': 'compras',
+             'norma': 'DUT 1.3.2.1.8 Inc.1 y 2', 'base_minima_pesos': 0, 'tarifa': Decimal('1.5'),
+             'cuenta_retencion': '236540'},
+            # COMPRAS CAFÉ
+            {'codigo': 'CC', 'concepto_pago': 'Compras de café pergamino o cereza', 'categoria': 'compras',
+             'norma': 'DUT 1.2.4.6.8 inc.1 y 2', 'base_minima_pesos': 3666000, 'tarifa': Decimal('0.5'),
+             'cuenta_retencion': '236540'},
+            # COMPRAS COMBUSTIBLES
+            {'codigo': 'COMB', 'concepto_pago': 'Compras combustibles derivados del petróleo', 'categoria': 'compras',
+             'norma': 'DUT 1.2.4.10.5', 'base_minima_pesos': 0, 'tarifa': Decimal('0.1'),
+             'cuenta_retencion': '236540'},
+            # SERVICIOS GENERALES
+            {'codigo': 'SG-D', 'concepto_pago': 'Servicios generales - Declarantes', 'categoria': 'servicios',
+             'norma': 'DUT 1.2.4.4.14 Inc.1', 'base_minima_pesos': 105000, 'tarifa': Decimal('4'),
+             'cuenta_retencion': '236525'},
+            {'codigo': 'SG-ND', 'concepto_pago': 'Servicios generales - No declarantes', 'categoria': 'servicios',
+             'norma': 'ET 392 Inc.4', 'base_minima_pesos': 105000, 'tarifa': Decimal('6'),
+             'cuenta_retencion': '236525'},
+            # HOTELES Y RESTAURANTES
+            {'codigo': 'HR-D', 'concepto_pago': 'Hoteles y restaurantes - Declarantes', 'categoria': 'servicios',
+             'norma': 'DUT 1.2.4.10.6 Inc 1', 'base_minima_pesos': 105000, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236525'},
+            {'codigo': 'HR-ND', 'concepto_pago': 'Hoteles y restaurantes - No declarantes', 'categoria': 'servicios',
+             'norma': 'ET 401 Inc.3, DUT 1.2.4.9.2 Par.3', 'base_minima_pesos': 105000, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236525'},
+            # TRANSPORTE
+            {'codigo': 'TT', 'concepto_pago': 'Transporte terrestre de pasajeros', 'categoria': 'transporte',
+             'norma': 'DUT 1.2.4.10.6 Inc.2', 'base_minima_pesos': 524000, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236530'},
+            {'codigo': 'TA', 'concepto_pago': 'Transporte aéreo o marítimo de pasajeros', 'categoria': 'transporte',
+             'norma': 'DUT 1.2.4.4.6', 'base_minima_pesos': 105000, 'tarifa': Decimal('1'),
+             'cuenta_retencion': '236530'},
+            {'codigo': 'TC', 'concepto_pago': 'Transporte de carga', 'categoria': 'transporte',
+             'norma': 'DUT 1.2.4.4.6 y 1.2.4.4.8', 'base_minima_pesos': 105000, 'tarifa': Decimal('1'),
+             'cuenta_retencion': '236530'},
+            # ARRENDAMIENTOS
+            {'codigo': 'AI-D', 'concepto_pago': 'Arrendamiento inmuebles - Declarantes', 'categoria': 'arrendamientos',
+             'norma': 'DUT 1.2.4.10.6 Inc.2', 'base_minima_pesos': 524000, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236520'},
+            {'codigo': 'AI-ND', 'concepto_pago': 'Arrendamiento inmuebles - No declarantes', 'categoria': 'arrendamientos',
+             'norma': 'ET 401 Inc.3 y DUT 1.2.4.9.2 Par.3', 'base_minima_pesos': 524000, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236520'},
+            {'codigo': 'AB', 'concepto_pago': 'Arrendamiento bienes muebles', 'categoria': 'arrendamientos',
+             'norma': 'DUT 1.2.4.4.10 Inc.2', 'base_minima_pesos': 0, 'tarifa': Decimal('4'),
+             'cuenta_retencion': '236520'},
+            # HONORARIOS
+            {'codigo': 'HO-PJ', 'concepto_pago': 'Honorarios personas jurídicas y asimiladas', 'categoria': 'honorarios',
+             'norma': 'DUT 1.2.4.3.1 Inc.1', 'base_minima_pesos': 0, 'tarifa': Decimal('11'),
+             'cuenta_retencion': '236515'},
+            {'codigo': 'HO-PN', 'concepto_pago': 'Honorarios persona natural < 3.300 UVT', 'categoria': 'honorarios',
+             'norma': 'DUT 1.2.4.3.1 Inc.2', 'base_minima_pesos': 0, 'tarifa': Decimal('10'),
+             'cuenta_retencion': '236515'},
+            {'codigo': 'HO-PN11', 'concepto_pago': 'Honorarios persona natural > 3.300 UVT', 'categoria': 'honorarios',
+             'norma': 'DUT 1.2.4.3.1 Inc.2 lit a', 'base_minima_pesos': 0, 'tarifa': Decimal('11'),
+             'cuenta_retencion': '236515'},
+            {'codigo': 'HO-ND', 'concepto_pago': 'Honorarios - No declarantes', 'categoria': 'honorarios',
+             'norma': 'ET 392 Inc.3', 'base_minima_pesos': 0, 'tarifa': Decimal('10'),
+             'cuenta_retencion': '236515'},
+            # CONSULTORÍA
+            {'codigo': 'CO-D', 'concepto_pago': 'Consultoría personas naturales declarantes', 'categoria': 'consultoria',
+             'norma': 'DUT 1.2.4.10.2 Inc.2', 'base_minima_pesos': 0, 'tarifa': Decimal('10'),
+             'cuenta_retencion': '236515'},
+            {'codigo': 'CO-PJ', 'concepto_pago': 'Consultoría personas jurídicas', 'categoria': 'consultoria',
+             'norma': 'DUT 1.2.4.10.2 Inc.1', 'base_minima_pesos': 0, 'tarifa': Decimal('11'),
+             'cuenta_retencion': '236515'},
+            # SOFTWARE
+            {'codigo': 'SW', 'concepto_pago': 'Software (análisis, diseño, desarrollo)', 'categoria': 'software',
+             'norma': 'DUT 1.2.4.3.1', 'base_minima_pesos': 0, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236515'},
+            # SERVICIOS TEMPORALES
+            {'codigo': 'ST', 'concepto_pago': 'Empresas de servicios temporales', 'categoria': 'servicios',
+             'norma': 'DUT 1.2.4.4.10 Inc.1', 'base_minima_pesos': 105000, 'tarifa': Decimal('1'),
+             'cuenta_retencion': '236525'},
+            # VIGILANCIA Y ASEO
+            {'codigo': 'VA', 'concepto_pago': 'Servicios vigilancia y aseo', 'categoria': 'servicios',
+             'norma': 'DUT 1.2.4.4.10 Inc.2', 'base_minima_pesos': 105000, 'tarifa': Decimal('2'),
+             'cuenta_retencion': '236525'},
+            # SALUD
+            {'codigo': 'SS', 'concepto_pago': 'Servicios integrales de salud por IPS', 'categoria': 'servicios',
+             'norma': 'ET 392 inc.5 y DUT 1.2.4.4.12', 'base_minima_pesos': 105000, 'tarifa': Decimal('2'),
+             'cuenta_retencion': '236525'},
+            # INGENIERÍA
+            {'codigo': 'ING-PJ', 'concepto_pago': 'Consultoría ingeniería/infraestructura PJ', 'categoria': 'consultoria',
+             'norma': 'DUT 1.2.4.10.3 Inc.1', 'base_minima_pesos': 0, 'tarifa': Decimal('6'),
+             'cuenta_retencion': '236515'},
+            {'codigo': 'ING-PN', 'concepto_pago': 'Consultoría ingeniería/infraestructura PN', 'categoria': 'consultoria',
+             'norma': 'DUT 1.2.4.10.3 Inc.2', 'base_minima_pesos': 0, 'tarifa': Decimal('6'),
+             'cuenta_retencion': '236515'},
+            # CONSTRUCCIÓN
+            {'codigo': 'CON', 'concepto_pago': 'Construcción y urbanización', 'categoria': 'construccion',
+             'norma': 'DUT 1.2.4.9.1 Inc.2', 'base_minima_pesos': 0, 'tarifa': Decimal('2'),
+             'cuenta_retencion': '236540'},
+            # OTROS INGRESOS
+            {'codigo': 'OI-D', 'concepto_pago': 'Otros ingresos tributarios - Declarantes', 'categoria': 'otros',
+             'norma': 'DUT 1.2.4.9.1 Inc.1', 'base_minima_pesos': 524000, 'tarifa': Decimal('2.5'),
+             'cuenta_retencion': '236570'},
+            {'codigo': 'OI-ND', 'concepto_pago': 'Otros ingresos tributarios - No declarantes', 'categoria': 'otros',
+             'norma': 'ET 401 Inc.3 y DUT 1.2.4.9.2 Par.3', 'base_minima_pesos': 524000, 'tarifa': Decimal('3.5'),
+             'cuenta_retencion': '236570'},
+            # RENDIMIENTOS FINANCIEROS
+            {'codigo': 'RF', 'concepto_pago': 'Rendimientos financieros (CDT, bonos)', 'categoria': 'financieros',
+             'norma': 'DUT 1.2.4.2.5', 'base_minima_pesos': 0, 'tarifa': Decimal('10'),  # Sobre 70% de la base
+             'cuenta_retencion': '236505'},
+            {'codigo': 'RF-INT', 'concepto_pago': 'Intereses financieros (CDAT, ahorros)', 'categoria': 'financieros',
+             'norma': 'DUT 1.2.4.2.32 y 1.2.4.2.83', 'base_minima_pesos': 0, 'tarifa': Decimal('4'),
+             'cuenta_retencion': '236505'},
+            # SIN RETENCIÓN
+            {'codigo': 'NONE', 'concepto_pago': 'Sin retención', 'categoria': 'ninguno',
+             'norma': '', 'base_minima_pesos': 0, 'tarifa': Decimal('0'),
+             'cuenta_retencion': ''},
+        ]
+
+        creados = 0
+        actualizados = 0
+        for d in datos:
+            obj, created = ConceptoRetencion.objects.update_or_create(
+                codigo=d['codigo'],
+                defaults=d
+            )
+            if created:
+                creados += 1
+            else:
+                actualizados += 1
+
+        return Response({
+            'success': True,
+            'mensaje': f'Retenciones CETA 2026 cargadas: {creados} nuevos, {actualizados} actualizados',
+            'total': len(datos),
+        })
+
+
+class ImportDIANPreviewView(views.APIView):
+    """
+    Sube un Excel DIAN (Emitidos o Recibidos) y devuelve datos parseados para preview.
+    POST /api/contabilidad/importar-dian/preview/
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        archivo = request.FILES.get('archivo')
+        tipo = request.data.get('tipo', 'recibidos')  # emitidos o recibidos
+        empresa_id = request.data.get('empresa')
+
+        if not archivo:
+            return Response({'error': 'Archivo requerido'}, status=400)
+        if not empresa_id:
+            return Response({'error': 'Empresa requerida'}, status=400)
+
+        try:
+            empresa = Empresa.objects.get(id=empresa_id)
+        except Empresa.DoesNotExist:
+            return Response({'error': 'Empresa no encontrada'}, status=404)
+
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(archivo, data_only=True)
+            ws = wb.active
+        except Exception as e:
+            return Response({'error': f'Error leyendo Excel: {str(e)}'}, status=400)
+
+        filas = []
+        for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
+            if not row[0]:
+                continue
+
+            nit_col = 9 if tipo == 'recibidos' else 11  # NIT Emisor vs Receptor
+            nombre_col = 10 if tipo == 'recibidos' else 12
+
+            nit_raw = str(row[nit_col] or '').strip()
+            nombre = str(row[nombre_col] or '').strip()
+            folio = f"{row[3] or ''}-{row[2] or ''}"
+            fecha_str = str(row[7] or '')
+
+            iva = float(row[13] or 0)
+            total = float(row[29] or 0)
+            subtotal = round(total - iva, 2)
+
+            # Buscar tercero existente
+            tercero_existente = Tercero.objects.filter(numero_documento=nit_raw).first()
+            es_nuevo = tercero_existente is None
+            es_autoretenedor = tercero_existente.es_autoretenedor if tercero_existente else False
+            es_declarante = tercero_existente.es_declarante if tercero_existente else True
+            tipo_doc = 'NIT' if len(nit_raw) >= 9 else 'CC'
+            if tercero_existente:
+                tipo_doc = tercero_existente.tipo_documento
+
+            fila = {
+                'idx': idx,
+                'incluir': True,
+                'nit': nit_raw,
+                'nombre': tercero_existente.nombre_razon_social if tercero_existente else nombre,
+                'tipo_documento': tipo_doc,
+                'folio': folio,
+                'fecha': fecha_str,
+                'subtotal': subtotal,
+                'iva': iva,
+                'total': total,
+                'tercero_existe': not es_nuevo,
+                'tercero_id': tercero_existente.id if tercero_existente else None,
+                'es_autoretenedor': es_autoretenedor,
+                'es_declarante': es_declarante,
+                'concepto_retencion_id': None,
+                'retencion_calculada': 0,
+                'cuenta_gasto': '613595' if tipo == 'recibidos' else '130505',
+                'cuenta_ingreso': '413595' if tipo == 'emitidos' else '',
+                'cuenta_iva': '240802' if tipo == 'recibidos' else '240804',
+                'estado_dian': str(row[30] or ''),
+            }
+            filas.append(fila)
+
+        # Cargar cuentas de la empresa para dropdowns
+        cuentas = list(Cuenta.objects.filter(
+            empresa=empresa, activa=True
+        ).values('codigo', 'nombre', 'naturaleza').order_by('codigo')[:500])
+
+        return Response({
+            'tipo': tipo,
+            'empresa': empresa.razon_social,
+            'total_filas': len(filas),
+            'filas': filas,
+            'cuentas': cuentas,
+        })
+
+
+class ImportDIANExecuteView(views.APIView):
+    """
+    Ejecuta la importación confirmada: crea terceros + asientos.
+    POST /api/contabilidad/importar-dian/ejecutar/
+    Body: { empresa, tipo, filas: [...] }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        empresa_id = request.data.get('empresa')
+        tipo = request.data.get('tipo', 'recibidos')
+        filas = request.data.get('filas', [])
+
+        if not empresa_id or not filas:
+            return Response({'error': 'Empresa y filas requeridas'}, status=400)
+
+        try:
+            empresa = Empresa.objects.get(id=empresa_id)
+        except Empresa.DoesNotExist:
+            return Response({'error': 'Empresa no encontrada'}, status=404)
+
+        terceros_creados = 0
+        asientos_creados = 0
+        errores = []
+
+        for i, fila in enumerate(filas):
+            if not fila.get('incluir', True):
+                continue
+
+            nit = str(fila.get('nit', '')).strip()
+            if not nit:
+                errores.append(f"Fila {i+1}: NIT vacío")
+                continue
+
+            # 1. Crear o obtener tercero
+            tercero = Tercero.objects.filter(numero_documento=nit).first()
+            if not tercero:
+                try:
+                    tercero = Tercero.objects.create(
+                        tipo_documento=fila.get('tipo_documento', 'NIT'),
+                        numero_documento=nit,
+                        nombre_razon_social=fila.get('nombre', f'Tercero {nit}'),
+                        tipo_tercero='PRO' if tipo == 'recibidos' else 'CLI',
+                        es_autoretenedor=fila.get('es_autoretenedor', False),
+                        es_declarante=fila.get('es_declarante', True),
+                    )
+                    terceros_creados += 1
+                except Exception as e:
+                    errores.append(f"Fila {i+1}: Error creando tercero {nit}: {str(e)}")
+                    continue
+            else:
+                # Actualizar flags si cambiaron
+                changed = False
+                if fila.get('es_autoretenedor') != tercero.es_autoretenedor:
+                    tercero.es_autoretenedor = fila.get('es_autoretenedor', False)
+                    changed = True
+                if fila.get('es_declarante') != tercero.es_declarante:
+                    tercero.es_declarante = fila.get('es_declarante', True)
+                    changed = True
+                if changed:
+                    tercero.save()
+
+            # 2. Parsear valores
+            subtotal = Decimal(str(fila.get('subtotal', 0)))
+            iva = Decimal(str(fila.get('iva', 0)))
+            total = Decimal(str(fila.get('total', 0)))
+            retencion = Decimal(str(fila.get('retencion_calculada', 0)))
+            folio = fila.get('folio', '')
+            fecha_str = fila.get('fecha', '')
+
+            # Parsear fecha
+            try:
+                if '-' in fecha_str and len(fecha_str) == 10:
+                    partes = fecha_str.split('-')
+                    if len(partes[0]) == 4:
+                        fecha = date.fromisoformat(fecha_str)
+                    else:
+                        fecha = date(int(partes[2]), int(partes[1]), int(partes[0]))
+                else:
+                    fecha = date.today()
+            except:
+                fecha = date.today()
+
+            # 3. Crear asiento contable
+            try:
+                asiento = AsientoContable.objects.create(
+                    empresa=empresa,
+                    fecha=fecha,
+                    tercero=tercero,
+                    concepto=f"{'Compra' if tipo == 'recibidos' else 'Venta'} {folio} - {tercero.nombre_razon_social}",
+                    estado='vigente',
+                )
+
+                cuenta_gasto = fila.get('cuenta_gasto', '')
+                cuenta_iva = fila.get('cuenta_iva', '')
+                cuenta_retencion = fila.get('cuenta_retencion', '')
+
+                if tipo == 'recibidos':
+                    # --- FACTURA DE COMPRA ---
+                    # DB: Gasto/Costo (subtotal)
+                    if subtotal > 0 and cuenta_gasto:
+                        cta = self._get_or_create_cuenta(empresa, cuenta_gasto, 'D')
+                        MovimientoContable.objects.create(
+                            asiento=asiento, cuenta=cta,
+                            descripcion=f"Compra {folio}",
+                            debito=subtotal, credito=Decimal('0')
+                        )
+
+                    # DB: IVA descontable
+                    if iva > 0 and cuenta_iva:
+                        cta = self._get_or_create_cuenta(empresa, cuenta_iva, 'D')
+                        MovimientoContable.objects.create(
+                            asiento=asiento, cuenta=cta,
+                            descripcion=f"IVA {folio}",
+                            debito=iva, credito=Decimal('0')
+                        )
+
+                    # CR: Retención en la fuente
+                    if retencion > 0 and cuenta_retencion:
+                        cta = self._get_or_create_cuenta(empresa, cuenta_retencion, 'C')
+                        MovimientoContable.objects.create(
+                            asiento=asiento, cuenta=cta,
+                            descripcion=f"Rete fuente {folio}",
+                            debito=Decimal('0'), credito=retencion
+                        )
+
+                    # CR: Proveedor (total - retención)
+                    valor_pagar = total - retencion
+                    cta_prov = self._get_or_create_cuenta(empresa, '220505', 'C')
+                    MovimientoContable.objects.create(
+                        asiento=asiento, cuenta=cta_prov,
+                        descripcion=f"CxP {folio} - {tercero.nombre_razon_social}",
+                        debito=Decimal('0'), credito=valor_pagar
+                    )
+
+                else:
+                    # --- FACTURA DE VENTA ---
+                    cuenta_ingreso = fila.get('cuenta_ingreso', '413595')
+
+                    # DB: Clientes (total)
+                    cta_cli = self._get_or_create_cuenta(empresa, cuenta_gasto or '130505', 'D')
+                    MovimientoContable.objects.create(
+                        asiento=asiento, cuenta=cta_cli,
+                        descripcion=f"CxC {folio} - {tercero.nombre_razon_social}",
+                        debito=total, credito=Decimal('0')
+                    )
+
+                    # CR: Ingreso (subtotal)
+                    if subtotal > 0 and cuenta_ingreso:
+                        cta = self._get_or_create_cuenta(empresa, cuenta_ingreso, 'C')
+                        MovimientoContable.objects.create(
+                            asiento=asiento, cuenta=cta,
+                            descripcion=f"Venta {folio}",
+                            debito=Decimal('0'), credito=subtotal
+                        )
+
+                    # CR: IVA generado
+                    if iva > 0 and cuenta_iva:
+                        cta = self._get_or_create_cuenta(empresa, cuenta_iva, 'C')
+                        MovimientoContable.objects.create(
+                            asiento=asiento, cuenta=cta,
+                            descripcion=f"IVA {folio}",
+                            debito=Decimal('0'), credito=iva
+                        )
+
+                asientos_creados += 1
+
+            except Exception as e:
+                errores.append(f"Fila {i+1}: Error creando asiento: {str(e)}")
+                continue
+
+        return Response({
+            'success': True,
+            'mensaje': f'Importación completada: {asientos_creados} asientos, {terceros_creados} terceros nuevos',
+            'asientos_creados': asientos_creados,
+            'terceros_creados': terceros_creados,
+            'errores': errores,
+        })
+
+    def _get_or_create_cuenta(self, empresa, codigo, naturaleza):
+        """Obtiene cuenta o la crea como auxiliar"""
+        cuenta = Cuenta.objects.filter(empresa=empresa, codigo=codigo).first()
+        if not cuenta:
+            # Buscar en CuentaBase
+            base = CuentaBase.objects.filter(codigo=codigo).first()
+            nombre = base.nombre if base else f"Cuenta {codigo}"
+            cuenta = Cuenta.objects.create(
+                empresa=empresa,
+                codigo=codigo,
+                nombre=nombre,
+                naturaleza=naturaleza,
+                tipo='Auxiliar',
+                activa=True,
+            )
+        return cuenta

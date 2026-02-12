@@ -47,6 +47,11 @@ from .views import (
     EjecutarCierreView,
     TrasladoResultadosView,
     ReabrirPeriodoView,
+    #Import DIAN + Retenciones
+    ConceptoRetencionListView,
+    SeedRetencionesView,
+    ImportDIANPreviewView,
+    ImportDIANExecuteView,
 )
 
 router = DefaultRouter()
@@ -107,4 +112,9 @@ urlpatterns = [
     path('cierres/ejecutar/', EjecutarCierreView.as_view()),
     path('cierres/trasladar-resultados/', TrasladoResultadosView.as_view()),
     path('cierres/reabrir/', ReabrirPeriodoView.as_view()),
+    #Import DIAN + Retenciones
+    path('retenciones/', ConceptoRetencionListView.as_view()),
+    path('retenciones/seed/', SeedRetencionesView.as_view()),
+    path('importar-dian/preview/', ImportDIANPreviewView.as_view()),
+    path('importar-dian/ejecutar/', ImportDIANExecuteView.as_view()),
 ]

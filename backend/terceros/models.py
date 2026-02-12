@@ -57,6 +57,9 @@ class Tercero(models.Model):
 
     # === ESTADO ===
     activo = models.BooleanField(default=True)
+    es_autoretenedor = models.BooleanField(default=False, verbose_name="Autoretenedor")
+    es_gran_contribuyente = models.BooleanField(default=False, verbose_name="Gran Contribuyente")
+    es_declarante = models.BooleanField(default=True, verbose_name="Declarante de Renta")
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
