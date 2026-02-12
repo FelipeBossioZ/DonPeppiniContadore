@@ -142,7 +142,7 @@ export default function Contabilidad() {
   function openNewAsiento() {
     setServerError(null);
     setRowErrors({});
-    setForm({ fecha: todayISO(), concepto: "", tercero_id: "", descripcion_adicional: "" });
+    setForm({ fecha: todayISO(), concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
     setMovRows([ { ...emptyRow }, { ...emptyRow } ]);
     setOpenForm(true);
   }
@@ -189,6 +189,7 @@ export default function Contabilidad() {
   // payload por CÓDIGO — ahora con tercero por línea
   const buildPayloadByCuentaCodigo = () => {
     const payload = {
+      empresa: empresaId,
       fecha: form.fecha,
       concepto: form.concepto,
       tercero: form.tercero_id ? Number(form.tercero_id) : null,
@@ -989,6 +990,16 @@ export default function Contabilidad() {
               <span className="text-gray-500">Tercero principal:</span>{" "}
               <span className="font-medium">{openDet.tercero_nombre || "N/A"}</span>
             </div>
+            <div className="mb-2 text-sm">
+              <span className="text-gray-500">Concepto:</span>{" "}
+              <span className="font-medium">{openDet.concepto || "—"}</span>
+            </div>
+            {openDet.descripcion_adicional && (
+              <div className="mb-3 text-sm bg-blue-50 border border-blue-200 rounded p-2">
+                <span className="text-gray-500">Notas adicionales:</span>{" "}
+                <span>{openDet.descripcion_adicional}</span>
+              </div>
+            )}
             <table className="min-w-full text-sm">
               <thead>
                 <tr>

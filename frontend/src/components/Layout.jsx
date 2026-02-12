@@ -19,6 +19,7 @@ import {
   Calculator,
   UserMinus,
   Gift,
+  Upload,
 } from 'lucide-react';
 import { authService } from '../services/auth';
 import EmpresaSelector from './EmpresaSelector';
@@ -41,6 +42,7 @@ const Layout = () => {
     { name: 'Terceros', href: '/terceros', icon: Users },
     { name: 'Contabilidad', href: '/contabilidad', icon: BookOpen },
     { name: 'Facturación', href: '/facturacion', icon: FileText },
+    { name: 'Importar DIAN', href: '/importar-dian', icon: Upload },
     { name: 'Nómina', href: '/nomina', icon: Briefcase },
     { name: 'Simulador Retención', href: '/simulador-retencion', icon: Calculator },
     { name: 'Liquidación Contrato', href: '/liquidacion-contrato', icon: UserMinus },

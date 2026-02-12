@@ -187,7 +187,7 @@ class AsientoContableSerializer(serializers.ModelSerializer):
     class Meta:
         model = AsientoContable
         fields = [
-            "id", "fecha", "concepto", "tercero", "tercero_nombre",
+            "id", "empresa", "numero", "fecha", "concepto", "tercero", "tercero_nombre",
             "descripcion", "descripcion_adicional",
             "fiscal_year", "fiscal_period",
             "movimientos", "estado", "anulado_por", "anulado_en", "anulacion_motivo", "ajusta_a",
@@ -237,13 +237,23 @@ class AsientoContableSerializer(serializers.ModelSerializer):
 
         fy = attrs.get("fiscal_year")   or (fecha.year if fecha else None)
         fp = attrs.get("fiscal_period") or (fecha.month if fecha else None)
-        p = PeriodoContable.ensure(fy)
+
+        # Obtener empresa para validación de periodo
+        empresa = attrs.get("empresa") or getattr(self.instance, "empresa", None)
+        if not empresa:
+            raise serializers.ValidationError({"empresa": "La empresa es obligatoria."})
+
+        p = PeriodoContable.ensure(empresa, fy)
 
         if fp == 13:
             if not p.habilitar_mes13:
                 raise serializers.ValidationError("Mes 13 deshabilitado para este año.")
-            if not p.in_ajustes(fecha):
-                raise serializers.ValidationError("Mes 13 solo permitido dentro de la ventana de ajustes del período.")
+            from datetime import date as _date
+            hoy = _date.today()
+            if not p.in_ajustes(hoy):
+                raise serializers.ValidationError(
+                    f"Mes 13 solo permitido durante la ventana de ajustes ({p.ajustes_inicio} a {p.ajustes_fin})."
+                )
         else:
             if p.estado == 'cerrado':
                 raise serializers.ValidationError(f"Período {fy} cerrado. Use Mes 13 durante la ventana de ajustes.")

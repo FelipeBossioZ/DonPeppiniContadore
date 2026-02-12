@@ -22,6 +22,9 @@ class TerceroListSerializer(serializers.ModelSerializer):
             'nombre_completo',
             'tipo_tercero',
             'activo',
+            'es_autoretenedor',
+            'es_gran_contribuyente',
+            'es_declarante',
         ]
 
 
@@ -56,6 +59,9 @@ class TerceroDetailSerializer(serializers.ModelSerializer):
             'telefono',
             'email',
             'activo',
+            'es_autoretenedor',
+            'es_gran_contribuyente',
+            'es_declarante',
             'fecha_creacion',
             'fecha_actualizacion'
         ]
@@ -85,6 +91,9 @@ class TerceroCreateSerializer(serializers.ModelSerializer):
             'codigo_pais',
             'telefono',
             'email',
+            'es_autoretenedor',
+            'es_gran_contribuyente',
+            'es_declarante',
         ]
 
     def validate_numero_documento(self, value):
