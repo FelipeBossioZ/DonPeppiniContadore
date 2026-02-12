@@ -146,13 +146,35 @@ export default function CierreContable() {
           </h1>
           <p className="text-gray-600 mt-1">{empresaActual.razon_social}</p>
         </div>
-        <button
-          onClick={() => { setShowModal(true); setPreview(null); }}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-        >
-          <Lock className="h-4 w-4" />
-          Nuevo Cierre
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              const año = prompt('¿De qué año trasladar el resultado? (3605→3705)', String(new Date().getFullYear() - 1));
+              if (!año) return;
+              if (!confirm(`¿Trasladar Utilidad/Pérdida del ejercicio ${año} a Utilidades/Pérdidas acumuladas?`)) return;
+              try {
+                const res = await api.post('/contabilidad/cierres/trasladar-resultados/', {
+                  empresa: empresaId, año: parseInt(año)
+                });
+                alert(`✅ ${res.data.mensaje}\nAsiento #${res.data.asiento_numero}`);
+                cargarCierres();
+              } catch (err) {
+                alert('❌ ' + (err.response?.data?.error || err.message));
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Trasladar Resultados
+          </button>
+          <button
+            onClick={() => { setShowModal(true); setPreview(null); }}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+          >
+            <Lock className="h-4 w-4" />
+            Nuevo Cierre
+          </button>
+        </div>
       </div>
 
       {/* Info */}
@@ -165,6 +187,7 @@ export default function CierreContable() {
               <li>Salda las cuentas de Ingresos (clase 4), Costos (clase 6) y Gastos (clase 5)</li>
               <li>Traslada el resultado a Utilidad o Pérdida del Ejercicio (cuenta 3605 o 3610)</li>
               <li>Bloquea el período para evitar modificaciones</li>
+              <li><strong>Trasladar Resultados:</strong> Mueve 3605→3705 (Utilidades acumuladas) o 3610→3710 (Pérdidas acumuladas) para iniciar el nuevo año</li>
             </ul>
           </div>
         </div>

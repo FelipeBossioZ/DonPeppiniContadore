@@ -5,6 +5,7 @@ import { useCuentas, useCreateCuenta, useUpdateCuenta } from "../hooks/useCuenta
 import { useAsientos, useCreateAsiento, useAnularAsiento } from "../hooks/useAsientos";
 import { useTerceros, useCreateTercero } from "../hooks/useTerceros";
 import { exportBalancePrueba } from "../utils/exports";
+import { calcularDV } from "../utils/calcularDV";
 import { toast } from "../ui/ToastHost";
 import ImportarAsientosModal from '../components/ImportarAsientosModal';
 import { FileSpreadsheet } from 'lucide-react';
@@ -78,7 +79,7 @@ export default function Contabilidad() {
   const [openForm, setOpenForm] = useState(false);
   const [serverError, setServerError] = useState(null);
   const emptyRow = { cuenta:"", tercero_id:"", debito:0, credito:0 };
-  const [form, setForm] = useState({ fecha: todayISO(), concepto:"", tercero_id:"", descripcion_adicional:"" });
+  const [form, setForm] = useState({ fecha: todayISO(), concepto:"", tercero_id:"", descripcion_adicional:"", es_ajuste: false });
   const [movRows, setMovRows] = useState([{...emptyRow},{...emptyRow}]);
 
   const [openImportar, setOpenImportar] = useState(false);
@@ -88,7 +89,7 @@ export default function Contabilidad() {
   const [openAnular, setOpenAnular] = useState(null);
   const [pins, setPins] = useState({ motivo:"", contador_pin:"", gerente_pin:"" });
   const [openTercero, setOpenTercero] = useState(false);
-  const [nuevoTer, setNuevoTer] = useState({ tipo_documento:"CC", numero_documento:"", nombre_razon_social:"", direccion:"", telefono:"", email:"" });
+  const [nuevoTer, setNuevoTer] = useState({ tipo_documento:"CC", numero_documento:"", digito_verificacion:"", nombre_razon_social:"", direccion:"", telefono:"", email:"" });
   const [exportMsg, setExportMsg] = useState("");
 
   // ---- modal cuenta (crear/editar) ----
@@ -148,7 +149,7 @@ export default function Contabilidad() {
 
   useEffect(() => {
     if (!openForm) {
-      setForm({ fecha: todayISO(), concepto: "", tercero_id: "", descripcion_adicional: "" });
+      setForm({ fecha: todayISO(), concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
       setMovRows([ { ...emptyRow }, { ...emptyRow } ]);
       setServerError(null);
       setRowErrors({});
@@ -186,18 +187,24 @@ export default function Contabilidad() {
   const balanceOk = Math.abs(totalDeb - totalCred) < 1e-6;
 
   // payload por CÓDIGO — ahora con tercero por línea
-  const buildPayloadByCuentaCodigo = () => ({
-    fecha: form.fecha,
-    concepto: form.concepto,
-    tercero: form.tercero_id ? Number(form.tercero_id) : null,
-    descripcion_adicional: form.descripcion_adicional || "",
-    movimientos: movRows.map((r) => ({
-      cuenta_codigo: r.cuenta,
-      tercero: r.tercero_id ? Number(r.tercero_id) : null,
-      debito: Number(r.debito) || 0,
-      credito: Number(r.credito) || 0,
-    })),
-  });
+  const buildPayloadByCuentaCodigo = () => {
+    const payload = {
+      fecha: form.fecha,
+      concepto: form.concepto,
+      tercero: form.tercero_id ? Number(form.tercero_id) : null,
+      descripcion_adicional: form.descripcion_adicional || "",
+      movimientos: movRows.map((r) => ({
+        cuenta_codigo: r.cuenta,
+        tercero: r.tercero_id ? Number(r.tercero_id) : null,
+        debito: Number(r.debito) || 0,
+        credito: Number(r.credito) || 0,
+      })),
+    };
+    if (form.es_ajuste) {
+      payload.fiscal_period = 13;
+    }
+    return payload;
+  };
 
   const onSubmitAsiento = (e) => {
     e.preventDefault();
@@ -588,12 +595,19 @@ export default function Contabilidad() {
                     type="date"
                     className="border rounded px-3 py-2 w-full"
                     value={form.fecha}
-                    min={min} max={max}
+                    min={form.es_ajuste ? undefined : min}
+                    max={form.es_ajuste ? undefined : max}
                     onChange={changeHdr("fecha")}
                     required
                   />
                 );
               })()}
+              <label className="flex items-center gap-2 mt-2 text-xs text-amber-700 cursor-pointer">
+                <input type="checkbox" checked={form.es_ajuste}
+                  onChange={e => setForm(f => ({ ...f, es_ajuste: e.target.checked }))}
+                  className="rounded border-gray-300" />
+                📋 Ajuste fiscal (Mes 13)
+              </label>
             </div>
 
             {/* Tercero principal */}
@@ -833,7 +847,7 @@ export default function Contabilidad() {
               onSuccess: (t) => {
                 setForm(s => ({ ...s, tercero_id: t.id }));
                 setOpenTercero(false);
-                setNuevoTer({ tipo_documento:"CC", numero_documento:"", nombre_razon_social:"", direccion:"", telefono:"", email:"" });
+                setNuevoTer({ tipo_documento:"CC", numero_documento:"", digito_verificacion:"", nombre_razon_social:"", direccion:"", telefono:"", email:"" });
               },
             });
           }}
@@ -851,12 +865,22 @@ export default function Contabilidad() {
           </div>
           <div>
             <label className="block text-sm mb-1">Número documento</label>
-            <input
-              className="border rounded px-3 py-2 w-full"
-              value={nuevoTer.numero_documento}
-              onChange={(e)=>setNuevoTer(s=>({...s, numero_documento:e.target.value}))}
-              required
-            />
+            <div className="flex gap-2">
+              <input
+                className="border rounded px-3 py-2 flex-1"
+                value={nuevoTer.numero_documento}
+                onChange={(e)=>{const v=e.target.value; setNuevoTer(s=>({...s, numero_documento:v, digito_verificacion: v ? calcularDV(v) : ""}))}}
+                required
+              />
+              <input
+                className="border rounded px-3 py-2 w-12 text-center bg-gray-50 font-mono"
+                value={nuevoTer.digito_verificacion}
+                readOnly
+                tabIndex={-1}
+                placeholder="DV"
+                title="Dígito de verificación"
+              />
+            </div>
           </div>
           <div className="md:col-span-2">
             <label className="block text-sm mb-1">Nombre / Razón social</label>

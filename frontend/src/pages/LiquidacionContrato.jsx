@@ -213,17 +213,15 @@ function DetailView({ liq, onLiquidar, onPagar, onEdit, onDelete }) {
           </div>
           <div className="flex items-center gap-2">
             {isBorrador && (
-              <>
-                <button onClick={onEdit} title="Editar"
-                  className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                  <Pencil size={16} />
-                </button>
-                <button onClick={onDelete} title="Eliminar"
-                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                  <Trash2 size={16} />
-                </button>
-              </>
+              <button onClick={onEdit} title="Editar"
+                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                <Pencil size={16} />
+              </button>
             )}
+            <button onClick={onDelete} title="Eliminar"
+              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+              <Trash2 size={16} />
+            </button>
             <Badge color={estadoColor[liq.estado]}>{liq.estado_display}</Badge>
             {liq.asiento_numero && <span className="text-xs text-gray-400">Asiento {liq.asiento_numero}</span>}
           </div>
