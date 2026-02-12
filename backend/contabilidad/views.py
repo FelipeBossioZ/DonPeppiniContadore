@@ -3608,7 +3608,6 @@ class ImportarExtractoView(views.APIView):
                 movimientos.append(MovimientoExtracto(
                     conciliacion=conc,
                     fecha=fecha,
-                    descripcion=desc,
                     debito=debito,
                     credito=credito,
                     saldo=saldo,
@@ -5996,7 +5995,6 @@ class EjecutarCierreView(views.APIView):
                 MovimientoContable.objects.create(
                     asiento=asiento,
                     cuenta=cuenta,
-                    descripcion=f"Cierre {cuenta.codigo}",
                     debito=saldo,
                     credito=Decimal('0')
                 )
@@ -6022,7 +6020,6 @@ class EjecutarCierreView(views.APIView):
                     MovimientoContable.objects.create(
                         asiento=asiento,
                         cuenta=cuenta,
-                        descripcion=f"Cierre {cuenta.codigo}",
                         debito=Decimal('0'),
                         credito=saldo
                     )
@@ -6052,7 +6049,6 @@ class EjecutarCierreView(views.APIView):
             MovimientoContable.objects.create(
                 asiento=asiento,
                 cuenta=cuenta_resultado,
-                descripcion=f"Utilidad del ejercicio {año}",
                 debito=Decimal('0'),
                 credito=resultado
             )
@@ -6060,7 +6056,6 @@ class EjecutarCierreView(views.APIView):
             MovimientoContable.objects.create(
                 asiento=asiento,
                 cuenta=cuenta_resultado,
-                descripcion=f"Pérdida del ejercicio {año}",
                 debito=abs(resultado),
                 credito=Decimal('0')
             )
@@ -6189,23 +6184,19 @@ class TrasladoResultadosView(views.APIView):
             if saldo > 0:
                 MovimientoContable.objects.create(
                     asiento=asiento, cuenta=m['origen'],
-                    descripcion=f"Traslado {m['origen'].codigo} → {m['destino'].codigo}",
                     debito=saldo, credito=Decimal('0')
                 )
                 MovimientoContable.objects.create(
                     asiento=asiento, cuenta=m['destino'],
-                    descripcion=f"Traslado resultado {año}",
                     debito=Decimal('0'), credito=saldo
                 )
             else:
                 MovimientoContable.objects.create(
                     asiento=asiento, cuenta=m['origen'],
-                    descripcion=f"Traslado {m['origen'].codigo} → {m['destino'].codigo}",
                     debito=Decimal('0'), credito=abs(saldo)
                 )
                 MovimientoContable.objects.create(
                     asiento=asiento, cuenta=m['destino'],
-                    descripcion=f"Traslado resultado {año}",
                     debito=abs(saldo), credito=Decimal('0')
                 )
             detalles.append({
@@ -6675,7 +6666,6 @@ class ImportDIANExecuteView(views.APIView):
                         cta = self._get_or_create_cuenta(empresa, cuenta_gasto, 'D')
                         MovimientoContable.objects.create(
                             asiento=asiento, cuenta=cta,
-                            descripcion=f"Compra {folio}",
                             debito=subtotal, credito=Decimal('0')
                         )
 
@@ -6684,7 +6674,6 @@ class ImportDIANExecuteView(views.APIView):
                         cta = self._get_or_create_cuenta(empresa, cuenta_iva, 'D')
                         MovimientoContable.objects.create(
                             asiento=asiento, cuenta=cta,
-                            descripcion=f"IVA {folio}",
                             debito=iva, credito=Decimal('0')
                         )
 
@@ -6693,7 +6682,6 @@ class ImportDIANExecuteView(views.APIView):
                         cta = self._get_or_create_cuenta(empresa, cuenta_retencion, 'C')
                         MovimientoContable.objects.create(
                             asiento=asiento, cuenta=cta,
-                            descripcion=f"Rete fuente {folio}",
                             debito=Decimal('0'), credito=retencion
                         )
 
@@ -6702,7 +6690,6 @@ class ImportDIANExecuteView(views.APIView):
                     cta_prov = self._get_or_create_cuenta(empresa, '220505', 'C')
                     MovimientoContable.objects.create(
                         asiento=asiento, cuenta=cta_prov,
-                        descripcion=f"CxP {folio} - {tercero.nombre_razon_social}",
                         debito=Decimal('0'), credito=valor_pagar
                     )
 
@@ -6714,7 +6701,6 @@ class ImportDIANExecuteView(views.APIView):
                     cta_cli = self._get_or_create_cuenta(empresa, cuenta_gasto or '130505', 'D')
                     MovimientoContable.objects.create(
                         asiento=asiento, cuenta=cta_cli,
-                        descripcion=f"CxC {folio} - {tercero.nombre_razon_social}",
                         debito=total, credito=Decimal('0')
                     )
 
@@ -6723,7 +6709,6 @@ class ImportDIANExecuteView(views.APIView):
                         cta = self._get_or_create_cuenta(empresa, cuenta_ingreso, 'C')
                         MovimientoContable.objects.create(
                             asiento=asiento, cuenta=cta,
-                            descripcion=f"Venta {folio}",
                             debito=Decimal('0'), credito=subtotal
                         )
 
@@ -6732,7 +6717,6 @@ class ImportDIANExecuteView(views.APIView):
                         cta = self._get_or_create_cuenta(empresa, cuenta_iva, 'C')
                         MovimientoContable.objects.create(
                             asiento=asiento, cuenta=cta,
-                            descripcion=f"IVA {folio}",
                             debito=Decimal('0'), credito=iva
                         )
 
