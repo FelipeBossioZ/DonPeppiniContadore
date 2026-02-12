@@ -59,8 +59,21 @@ function naturalezaEsperada(codigo){ if(!codigo) return null; const s=String(cod
   if(s.startsWith("4")){ if(s.startsWith("4175")||s.startsWith("4195")) return null; return "C"; }
   if(s.startsWith("5")){ if(s.startsWith("5905")) return null; return "D"; }
   return null; }
-const fmtDate = iso => iso ? new Date(iso).toLocaleDateString("es-CO") : "";
+const fmtDate = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString("es-CO") : "";
 const fmtMoney = n => new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:2}).format(n ?? 0);
+
+const TIPOS_COMPROBANTE = [
+  { value: "RC", label: "RC - Recibo de Caja" },
+  { value: "CE", label: "CE - Comprobante de Egreso" },
+  { value: "FV", label: "FV - Factura de Venta" },
+  { value: "FC", label: "FC - Factura de Compra" },
+  { value: "NM", label: "NM - Nómina" },
+  { value: "AJ", label: "AJ - Ajustes" },
+  { value: "NC", label: "NC - Nota Crédito" },
+  { value: "ND", label: "ND - Nota Débito" },
+  { value: "CI", label: "CI - Comprobante de Ingreso" },
+  { value: "OT", label: "OT - Otros" },
+];
 
 
 export default function Contabilidad() {
@@ -70,6 +83,7 @@ export default function Contabilidad() {
   const [search, setSearch] = useState("");
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+  const [tipoFilter, setTipoFilter] = useState("");
   const [gravYear, setGravYear] = useState(new Date().getFullYear());
   const years = useMemo(() => Array.from({length:6},(_,i)=> new Date().getFullYear()-i), []);
   const [page, setPage] = useState(1);
@@ -79,7 +93,7 @@ export default function Contabilidad() {
   const [openForm, setOpenForm] = useState(false);
   const [serverError, setServerError] = useState(null);
   const emptyRow = { cuenta:"", tercero_id:"", debito:0, credito:0 };
-  const [form, setForm] = useState({ fecha: todayISO(), concepto:"", tercero_id:"", descripcion_adicional:"", es_ajuste: false });
+  const [form, setForm] = useState({ fecha: todayISO(), tipo_comprobante: "OT", concepto:"", tercero_id:"", descripcion_adicional:"", es_ajuste: false });
   const [movRows, setMovRows] = useState([{...emptyRow},{...emptyRow}]);
 
   const [openImportar, setOpenImportar] = useState(false);
@@ -107,7 +121,7 @@ export default function Contabilidad() {
   const cuentas = useMemo(() => empresaId ? cuentasAll.filter(c => c.empresa === empresaId || !c.empresa) : cuentasAll, [cuentasAll, empresaId]);
   const cuentaCodes = useMemo(()=> new Set(cuentas.map(c => String(c.codigo))) ,[cuentas]);
   const { data: asientosData = {}, isLoading: lAsientos, isError: eAsientos, error: errAsientos } =
-    useAsientos({ empresa: empresaId, fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined, page });
+    useAsientos({ empresa: empresaId, fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined, tipo_comprobante: tipoFilter || undefined, page });
 
   const asientos = asientosData.items ?? asientosData ?? [];
   const total    = asientosData.count ?? (Array.isArray(asientosData) ? asientosData.length : 0);
@@ -115,7 +129,7 @@ export default function Contabilidad() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   // mutaciones
-  const create  = useCreateAsiento({ empresa: empresaId, fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined });
+  const create  = useCreateAsiento({ empresa: empresaId, fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined, tipo_comprobante: tipoFilter || undefined });
   const anularM = useAnularAsiento({});
   const { data: terceros = [] } = useTerceros({});
   const createTer = useCreateTercero({});
@@ -143,7 +157,7 @@ export default function Contabilidad() {
   function openNewAsiento() {
     setServerError(null);
     setRowErrors({});
-    setForm({ fecha: todayISO(), concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
+    setForm({ fecha: todayISO(), tipo_comprobante: "OT", concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
     setMovRows([ { ...emptyRow }, { ...emptyRow } ]);
     setOpenForm(true);
   }
@@ -153,6 +167,7 @@ export default function Contabilidad() {
     setRowErrors({});
     setForm({
       fecha: todayISO(),
+      tipo_comprobante: a.tipo_comprobante || "OT",
       concepto: a.concepto || "",
       tercero_id: a.tercero ? String(a.tercero) : "",
       descripcion_adicional: a.descripcion_adicional || "",
@@ -172,7 +187,7 @@ export default function Contabilidad() {
   function canCorregir(a) {
     if (a.estado === "anulado") return false;
     const hoy = new Date();
-    const fechaAsiento = new Date(a.fecha);
+    const fechaAsiento = new Date(a.fecha + "T12:00:00");
     return hoy.getFullYear() === fechaAsiento.getFullYear()
         && hoy.getMonth() === fechaAsiento.getMonth();
   }
@@ -193,7 +208,7 @@ export default function Contabilidad() {
 
   useEffect(() => {
     if (!openForm) {
-      setForm({ fecha: todayISO(), concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
+      setForm({ fecha: todayISO(), tipo_comprobante: "OT", concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
       setMovRows([ { ...emptyRow }, { ...emptyRow } ]);
       setServerError(null);
       setRowErrors({});
@@ -235,6 +250,7 @@ export default function Contabilidad() {
     const payload = {
       empresa: empresaId,
       fecha: form.fecha,
+      tipo_comprobante: form.tipo_comprobante || "OT",
       concepto: form.concepto,
       tercero: form.tercero_id ? Number(form.tercero_id) : null,
       descripcion_adicional: form.descripcion_adicional || "",
@@ -419,9 +435,19 @@ export default function Contabilidad() {
 
         <div className="bg-white p-4 rounded-lg border border-gray-200 lg:col-span-2">
           <label className="block text-sm mb-2">Rango de fechas (asientos)</label>
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             <input type="date" value={fechaInicio} onChange={onChangeIni} className="border rounded px-3 py-2" />
             <input type="date" value={fechaFin} onChange={onChangeFin} className="border rounded px-3 py-2" />
+            <select
+              value={tipoFilter}
+              onChange={e => { setTipoFilter(e.target.value); setPage(1); }}
+              className="border rounded px-3 py-2"
+            >
+              <option value="">Todos los tipos</option>
+              {TIPOS_COMPROBANTE.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
           </div>
           <p className="text-xs text-gray-500 mt-2">{total} asientos</p>
         </div>
@@ -466,7 +492,7 @@ export default function Contabilidad() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Comprobante</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Concepto</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tercero</th>
@@ -477,7 +503,7 @@ export default function Contabilidad() {
                   {asientos.map((a) => (
                     <tr key={a.id} className={`hover:bg-gray-50 ${a.estado === "anulado" ? "opacity-50" : ""}`}>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        #{a.numero || a.id}
+                        <span className="font-mono">{a.tipo_comprobante || "OT"}-{String(a.numero || a.id).padStart(4, '0')}</span>
                         {a.estado === "anulado" && (
                           <span className="ml-2 px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded">Anulado</span>
                         )}
@@ -640,7 +666,22 @@ export default function Contabilidad() {
       {/* ====== MODAL: Nuevo Asiento ====== */}
       <Modal open={openForm} onClose={() => setOpenForm(false)} title="Nuevo asiento contable" footer={null} wide>
         <form onSubmit={onSubmitAsiento} className="grid grid-cols-1 gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            {/* Tipo de Comprobante */}
+            <div>
+              <label className="block text-sm mb-1">Tipo Comprobante</label>
+              <select
+                className="border rounded px-3 py-2 w-full"
+                value={form.tipo_comprobante}
+                onChange={changeHdr("tipo_comprobante")}
+                required
+              >
+                {TIPOS_COMPROBANTE.map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Fecha */}
             <div>
               <label className="block text-sm mb-1">Fecha</label>
@@ -688,7 +729,7 @@ export default function Contabilidad() {
             </div>
 
             {/* Concepto */}
-            <div className="md:col-span-3">
+            <div className="md:col-span-4">
               <label className="block text-sm mb-1">Concepto</label>
               <input
                 className="border rounded px-3 py-2 w-full"
@@ -701,7 +742,7 @@ export default function Contabilidad() {
           </div>
 
           {/* Descripción adicional */}
-          <div className="md:col-span-3">
+          <div className="md:col-span-4">
             <label className="block text-sm mb-1">Descripción adicional (opcional)</label>
             <textarea
               className="border rounded px-3 py-2 w-full"
@@ -1038,7 +1079,7 @@ export default function Contabilidad() {
       </Modal>
 
       {/* ====== MODAL: Ver detalle (con tercero por línea) ====== */}
-      <Modal open={!!openDet} onClose={()=>setOpenDet(null)} title={`Asiento #${openDet?.id}`} footer={null}>
+      <Modal open={!!openDet} onClose={()=>setOpenDet(null)} title={`${openDet?.tipo_comprobante || "OT"}-${String(openDet?.numero || openDet?.id).padStart(4, '0')}`} footer={null}>
         {openDet ? (
           <div className="overflow-x-auto">
             <div className="mb-3 text-sm">
@@ -1101,7 +1142,7 @@ export default function Contabilidad() {
       <Modal
         open={!!openAnular}
         onClose={()=>setOpenAnular(null)}
-        title={`Anular asiento #${openAnular?.id}`}
+        title={`Anular ${openAnular?.tipo_comprobante || "OT"}-${String(openAnular?.numero || openAnular?.id).padStart(4, '0')}`}
         footer={
           <div className="flex justify-end gap-2">
             <button className="px-3 py-2 rounded border" onClick={()=>setOpenAnular(null)}>Cancelar</button>
@@ -1152,7 +1193,7 @@ export default function Contabilidad() {
       <Modal
         open={!!openCorregir}
         onClose={()=>setOpenCorregir(null)}
-        title={`Corregir asiento #${openCorregir?.id}`}
+        title={`Corregir ${openCorregir?.tipo_comprobante || "OT"}-${String(openCorregir?.numero || openCorregir?.id).padStart(4, '0')}`}
         footer={
           <div className="flex justify-end gap-2">
             <button className="px-3 py-2 rounded border" onClick={()=>setOpenCorregir(null)}>Cancelar</button>
@@ -1169,7 +1210,7 @@ export default function Contabilidad() {
           <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm">
             <p className="font-medium text-amber-800 mb-1">¿Cómo funciona?</p>
             <p className="text-amber-700">
-              Se anulará el asiento #{openCorregir?.id} y se abrirá un formulario
+              Se anulará el comprobante {openCorregir?.tipo_comprobante || "OT"}-{String(openCorregir?.numero || openCorregir?.id).padStart(4, '0')} y se abrirá un formulario
               con los mismos datos para que hagás las correcciones necesarias.
               La pista de auditoría queda intacta.
             </p>

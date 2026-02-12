@@ -544,17 +544,28 @@ function EstadoPatrimonio({ data }) {
 }
 
 function EstadoFlujos({ data }) {
-  const FilaFlujo = ({ concepto, valor, indent = false, bold = false }) => (
-    <tr className={`border-b border-gray-100 ${bold ? 'font-medium bg-gray-50' : ''}`}>
-      <td className={`py-2 ${indent ? 'pl-8' : 'pl-4'}`}>{concepto}</td>
-      <td className={`py-2 text-right pr-4 ${valor < 0 ? 'text-red-600' : ''}`}>
+  const [showVariaciones, setShowVariaciones] = useState(false);
+
+  const FilaFlujo = ({ concepto, valor, indent = false, bold = false, sub = false }) => (
+    <tr className={`border-b border-gray-100 ${bold ? 'font-medium bg-gray-50' : ''} ${sub ? 'text-gray-500 text-xs' : ''}`}>
+      <td className={`py-2 ${indent ? 'pl-8' : sub ? 'pl-12' : 'pl-4'}`}>{concepto}</td>
+      <td className={`py-2 text-right pr-4 font-mono ${valor < 0 ? 'text-red-600' : valor > 0 ? 'text-green-700' : 'text-gray-400'}`}>
         {formatMoney(valor)}
+      </td>
+    </tr>
+  );
+
+  const SeccionHeader = ({ color, children }) => (
+    <tr className={`bg-${color}-50`}>
+      <td colSpan="2" className={`py-3 px-4 font-bold text-${color}-800`}>
+        {children}
       </td>
     </tr>
   );
 
   return (
     <div className="max-w-2xl mx-auto">
+      {/* Header */}
       <div className="text-center border-b pb-4 mb-6">
         <h2 className="text-xl font-bold text-gray-900">{data.titulo}</h2>
         <p className="text-sm text-indigo-600 font-medium">{data.subtitulo}</p>
@@ -566,57 +577,202 @@ function EstadoFlujos({ data }) {
 
       <table className="w-full text-sm">
         <tbody>
-          {/* Operación */}
-          <tr className="bg-blue-50">
-            <td colSpan="2" className="py-3 px-4 font-bold text-blue-800">
-              ACTIVIDADES DE OPERACIÓN
-            </td>
-          </tr>
-          <FilaFlujo concepto="Utilidad Neta del Ejercicio" valor={data.operacion.utilidad_neta} />
-          <FilaFlujo concepto="(+) Depreciación" valor={data.operacion.ajustes.depreciacion} indent />
-          <FilaFlujo concepto="Cambios en Deudores" valor={data.operacion.cambios_capital_trabajo.deudores} indent />
-          <FilaFlujo concepto="Cambios en Inventarios" valor={data.operacion.cambios_capital_trabajo.inventarios} indent />
-          <FilaFlujo concepto="Cambios en Proveedores" valor={data.operacion.cambios_capital_trabajo.proveedores} indent />
-          <FilaFlujo concepto="Cambios en Cuentas por Pagar" valor={data.operacion.cambios_capital_trabajo.cuentas_por_pagar} indent />
-          <FilaFlujo concepto="Cambios en Impuestos" valor={data.operacion.cambios_capital_trabajo.impuestos} indent />
-          <FilaFlujo concepto="Cambios en Obligaciones Laborales" valor={data.operacion.cambios_capital_trabajo.obligaciones_laborales} indent />
-          <FilaFlujo concepto="= Flujo Neto de Operación" valor={data.operacion.total} bold />
+          {/* ── EAO ─────────────────────────────────────────────────── */}
+          <SeccionHeader color="blue">
+            EAO — ACTIVIDADES DE OPERACIÓN
+          </SeccionHeader>
 
-          {/* Inversión */}
-          <tr className="bg-amber-50">
-            <td colSpan="2" className="py-3 px-4 font-bold text-amber-800">
-              ACTIVIDADES DE INVERSIÓN
-            </td>
-          </tr>
-          <FilaFlujo concepto="Inversiones" valor={data.inversion.inversiones} indent />
-          <FilaFlujo concepto="Propiedad, Planta y Equipo" valor={data.inversion.propiedad_planta_equipo} indent />
-          <FilaFlujo concepto="Intangibles" valor={data.inversion.intangibles} indent />
-          <FilaFlujo concepto="= Flujo Neto de Inversión" valor={data.inversion.total} bold />
+          <FilaFlujo concepto="Resultado Neto del Ejercicio" valor={data.operacion.resultado_neto} />
 
-          {/* Financiación */}
-          <tr className="bg-green-50">
-            <td colSpan="2" className="py-3 px-4 font-bold text-green-800">
-              ACTIVIDADES DE FINANCIACIÓN
-            </td>
-          </tr>
-          <FilaFlujo concepto="Obligaciones Financieras" valor={data.financiacion.obligaciones_financieras} indent />
-          <FilaFlujo concepto="Aportes de Capital" valor={data.financiacion.aportes_capital} indent />
-          <FilaFlujo concepto="= Flujo Neto de Financiación" valor={data.financiacion.total} bold />
+          {/* Partidas que no afectan efectivo */}
+          {data.operacion.partidas_no_efectivo?.length > 0 && (
+            <>
+              <tr>
+                <td colSpan="2" className="py-2 pl-4 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Partidas que no afectan el efectivo:
+                </td>
+              </tr>
+              {data.operacion.partidas_no_efectivo.map((p, i) => (
+                <FilaFlujo key={i} concepto={`(+) ${p.nombre}`} valor={p.valor} indent />
+              ))}
+            </>
+          )}
 
-          {/* Resumen */}
-          <tr className="bg-indigo-100">
-            <td colSpan="2" className="py-3 px-4 font-bold text-indigo-800">
-              RESUMEN
+          {/* EGO */}
+          <tr className="bg-blue-50/50 font-semibold">
+            <td className="py-2 pl-4 text-blue-800">EGO — Efectivo Generado por la Operación</td>
+            <td className={`py-2 text-right pr-4 font-mono ${data.operacion.ego < 0 ? 'text-red-600' : 'text-blue-800'}`}>
+              {formatMoney(data.operacion.ego)}
             </td>
           </tr>
-          <FilaFlujo concepto="Variación Neta del Efectivo" valor={data.resumen.variacion_efectivo} bold />
-          <FilaFlujo concepto="Efectivo al Inicio del Periodo" valor={data.resumen.efectivo_inicial} />
-          <tr className="bg-green-100 font-bold text-lg">
-            <td className="py-3 px-4">EFECTIVO AL FINAL DEL PERIODO</td>
-            <td className="py-3 text-right pr-4">{formatMoney(data.resumen.efectivo_final)}</td>
+
+          {/* Variación CTNO */}
+          {data.operacion.variacion_ctno?.length > 0 && (
+            <>
+              <tr>
+                <td colSpan="2" className="py-2 pl-4 text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  Variación Capital de Trabajo Neto Operativo:
+                </td>
+              </tr>
+              {data.operacion.variacion_ctno.map((item, i) => (
+                <FilaFlujo key={i} concepto={item.nombre} valor={item.valor} indent />
+              ))}
+              <FilaFlujo concepto="Total Variación CTNO" valor={data.operacion.total_ctno} bold />
+            </>
+          )}
+
+          {/* Total EAO */}
+          <tr className="bg-blue-100 font-bold text-base">
+            <td className="py-3 px-4 text-blue-900">TOTAL EAO</td>
+            <td className={`py-3 text-right pr-4 font-mono ${data.operacion.total < 0 ? 'text-red-700' : 'text-blue-900'}`}>
+              {formatMoney(data.operacion.total)}
+            </td>
+          </tr>
+
+          {/* ── EAI ─────────────────────────────────────────────────── */}
+          <SeccionHeader color="amber">
+            EAI — ACTIVIDADES DE INVERSIÓN
+          </SeccionHeader>
+
+          {data.inversion.items?.length > 0 ? (
+            data.inversion.items.map((item, i) => (
+              <FilaFlujo key={i} concepto={item.nombre} valor={item.valor} indent />
+            ))
+          ) : (
+            <tr>
+              <td colSpan="2" className="py-2 pl-8 text-gray-400 italic text-sm">
+                Sin movimientos de inversión
+              </td>
+            </tr>
+          )}
+
+          <tr className="bg-amber-100 font-bold text-base">
+            <td className="py-3 px-4 text-amber-900">TOTAL EAI</td>
+            <td className={`py-3 text-right pr-4 font-mono ${data.inversion.total < 0 ? 'text-red-700' : 'text-amber-900'}`}>
+              {formatMoney(data.inversion.total)}
+            </td>
+          </tr>
+
+          {/* ── EAF ─────────────────────────────────────────────────── */}
+          <SeccionHeader color="green">
+            EAF — ACTIVIDADES DE FINANCIACIÓN
+          </SeccionHeader>
+
+          {data.financiacion.items?.length > 0 ? (
+            data.financiacion.items.map((item, i) => (
+              <FilaFlujo key={i} concepto={item.nombre} valor={item.valor} indent />
+            ))
+          ) : (
+            <tr>
+              <td colSpan="2" className="py-2 pl-8 text-gray-400 italic text-sm">
+                Sin movimientos de financiación
+              </td>
+            </tr>
+          )}
+
+          <tr className="bg-green-100 font-bold text-base">
+            <td className="py-3 px-4 text-green-900">TOTAL EAF</td>
+            <td className={`py-3 text-right pr-4 font-mono ${data.financiacion.total < 0 ? 'text-red-700' : 'text-green-900'}`}>
+              {formatMoney(data.financiacion.total)}
+            </td>
+          </tr>
+
+          {/* ── RESUMEN ────────────────────────────────────────────── */}
+          <SeccionHeader color="indigo">
+            RESUMEN
+          </SeccionHeader>
+
+          <FilaFlujo concepto="Variación Neta del Efectivo" valor={data.resumen.variacion_neta} bold />
+          <FilaFlujo concepto="Efectivo al Inicio del Período" valor={data.resumen.efectivo_inicial} />
+
+          <tr className="bg-indigo-100 font-bold text-lg">
+            <td className="py-3 px-4 text-indigo-900">EFECTIVO AL FINAL DEL PERÍODO</td>
+            <td className="py-3 text-right pr-4 font-mono text-indigo-900">
+              {formatMoney(data.resumen.efectivo_final_calculado)}
+            </td>
+          </tr>
+
+          {/* Verificación */}
+          <tr>
+            <td colSpan="2" className="py-2 px-4">
+              <div className={`flex items-center gap-2 text-sm ${data.resumen.cuadra ? 'text-green-600' : 'text-red-600'}`}>
+                {data.resumen.cuadra ? '✓' : '✗'}
+                <span>
+                  Saldo Balance: {formatMoney(data.resumen.efectivo_final_balance)}
+                  {data.resumen.cuadra ? ' — CUADRADO' : ' — DESCUADRE'}
+                </span>
+              </div>
+            </td>
           </tr>
         </tbody>
       </table>
+
+      {/* Botón tabla de variaciones */}
+      {data.variaciones?.length > 0 && (
+        <div className="mt-6">
+          <button
+            onClick={() => setShowVariaciones(!showVariaciones)}
+            className="text-sm text-indigo-600 hover:text-indigo-800 underline"
+          >
+            {showVariaciones ? 'Ocultar' : 'Ver'} tabla de variaciones ({data.variaciones.length} cuentas)
+          </button>
+
+          {showVariaciones && (
+            <div className="mt-3 max-h-64 overflow-y-auto border rounded-lg">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th className="text-left py-2 px-2">Código</th>
+                    <th className="text-left py-2 px-2">Cuenta</th>
+                    <th className="text-right py-2 px-2">Saldo Ini</th>
+                    <th className="text-right py-2 px-2">Saldo Fin</th>
+                    <th className="text-right py-2 px-2">Variación</th>
+                    <th className="text-center py-2 px-2">Clasif.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.variaciones.map((v, i) => (
+                    <tr key={i} className="border-t hover:bg-gray-50">
+                      <td className="py-1 px-2 font-mono">{v.codigo}</td>
+                      <td className="py-1 px-2 truncate max-w-[150px]">{v.nombre}</td>
+                      <td className="py-1 px-2 text-right font-mono">{formatMoney(v.saldo_inicial)}</td>
+                      <td className="py-1 px-2 text-right font-mono">{formatMoney(v.saldo_final)}</td>
+                      <td className={`py-1 px-2 text-right font-mono ${v.variacion < 0 ? 'text-red-600' : v.variacion > 0 ? 'text-green-600' : ''}`}>
+                        {formatMoney(v.variacion)}
+                      </td>
+                      <td className="py-1 px-2 text-center">
+                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                          v.clasificacion === 'CTNO-A' ? 'bg-blue-100 text-blue-700' :
+                          v.clasificacion === 'CTNO-P' ? 'bg-cyan-100 text-cyan-700' :
+                          v.clasificacion === 'EAI' ? 'bg-amber-100 text-amber-700' :
+                          v.clasificacion === 'EAF' ? 'bg-green-100 text-green-700' :
+                          v.clasificacion === 'NO-EF' ? 'bg-purple-100 text-purple-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {v.clasificacion}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Firmas */}
+      <div className="mt-10 grid grid-cols-3 gap-4 text-center text-xs text-gray-500 pt-4 border-t">
+        <div>
+          <div className="border-t border-gray-400 pt-1 mx-4">Representante Legal</div>
+        </div>
+        <div>
+          <div className="border-t border-gray-400 pt-1 mx-4">Contador</div>
+        </div>
+        <div>
+          <div className="border-t border-gray-400 pt-1 mx-4">Revisor Fiscal</div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -247,6 +247,7 @@ function generarCambiosPatrimonio(XLSX, workbook, data) {
 }
 
 function generarFlujosEfectivo(XLSX, workbook, data) {
+  // ── Hoja 1: Estado de Flujos de Efectivo ──────────────────────────
   const rows = [
     [data.empresa?.razon_social || 'Empresa'],
     ['Estado de Flujos de Efectivo'],
@@ -257,41 +258,82 @@ function generarFlujosEfectivo(XLSX, workbook, data) {
     [],
     ['Concepto', 'Valor'],
     [],
-    ['ACTIVIDADES DE OPERACIÓN'],
-    ['Utilidad Neta del Ejercicio', data.operacion?.utilidad_neta || 0],
-    ['(+) Depreciación', data.operacion?.ajustes?.depreciacion || 0],
-    ['Cambios en Deudores', data.operacion?.cambios_capital_trabajo?.deudores || 0],
-    ['Cambios en Inventarios', data.operacion?.cambios_capital_trabajo?.inventarios || 0],
-    ['Cambios en Proveedores', data.operacion?.cambios_capital_trabajo?.proveedores || 0],
-    ['Cambios en Cuentas por Pagar', data.operacion?.cambios_capital_trabajo?.cuentas_por_pagar || 0],
-    ['Cambios en Impuestos', data.operacion?.cambios_capital_trabajo?.impuestos || 0],
-    ['Cambios en Obligaciones Laborales', data.operacion?.cambios_capital_trabajo?.obligaciones_laborales || 0],
-    ['= Flujo Neto de Operación', data.operacion?.total || 0],
+    ['EAO — ACTIVIDADES DE OPERACIÓN'],
+    ['Resultado Neto del Ejercicio', data.operacion?.resultado_neto || 0],
     [],
-    ['ACTIVIDADES DE INVERSIÓN'],
-    ['Inversiones', data.inversion?.inversiones || 0],
-    ['Propiedad, Planta y Equipo', data.inversion?.propiedad_planta_equipo || 0],
-    ['Intangibles', data.inversion?.intangibles || 0],
-    ['= Flujo Neto de Inversión', data.inversion?.total || 0],
-    [],
-    ['ACTIVIDADES DE FINANCIACIÓN'],
-    ['Obligaciones Financieras', data.financiacion?.obligaciones_financieras || 0],
-    ['Aportes de Capital', data.financiacion?.aportes_capital || 0],
-    ['= Flujo Neto de Financiación', data.financiacion?.total || 0],
-    [],
-    ['RESUMEN'],
-    ['Variación Neta del Efectivo', data.resumen?.variacion_efectivo || 0],
-    ['Efectivo al Inicio del Periodo', data.resumen?.efectivo_inicial || 0],
-    ['EFECTIVO AL FINAL DEL PERIODO', data.resumen?.efectivo_final || 0],
+    ['Partidas que no afectan el efectivo:'],
   ];
+
+  // Partidas no efectivo
+  (data.operacion?.partidas_no_efectivo || []).forEach(p => {
+    rows.push(['  (+) ' + p.nombre, p.valor]);
+  });
+  rows.push(['Total partidas no efectivo', data.operacion?.total_no_efectivo || 0]);
+  rows.push([]);
+  rows.push(['EGO — Efectivo Generado por la Operación', data.operacion?.ego || 0]);
+  rows.push([]);
+  rows.push(['Variación Capital de Trabajo Neto Operativo:']);
   
+  // CTNO items
+  (data.operacion?.variacion_ctno || []).forEach(item => {
+    rows.push(['  ' + item.nombre, item.valor]);
+  });
+  rows.push(['Total Variación CTNO', data.operacion?.total_ctno || 0]);
+  rows.push([]);
+  rows.push(['TOTAL EAO', '', data.operacion?.total || 0]);
+  rows.push([]);
+
+  // EAI
+  rows.push(['EAI — ACTIVIDADES DE INVERSIÓN']);
+  (data.inversion?.items || []).forEach(item => {
+    rows.push(['  ' + item.nombre, item.valor]);
+  });
+  rows.push(['TOTAL EAI', '', data.inversion?.total || 0]);
+  rows.push([]);
+
+  // EAF
+  rows.push(['EAF — ACTIVIDADES DE FINANCIACIÓN']);
+  (data.financiacion?.items || []).forEach(item => {
+    rows.push(['  ' + item.nombre, item.valor]);
+  });
+  rows.push(['TOTAL EAF', '', data.financiacion?.total || 0]);
+  rows.push([]);
+
+  // Resumen
+  rows.push(['RESUMEN']);
+  rows.push(['Variación Neta del Efectivo', data.resumen?.variacion_neta || 0]);
+  rows.push(['Efectivo al Inicio del Período', data.resumen?.efectivo_inicial || 0]);
+  rows.push(['EFECTIVO AL FINAL DEL PERÍODO', data.resumen?.efectivo_final_calculado || 0]);
+  rows.push([]);
+  rows.push(['Saldo según Balance', data.resumen?.efectivo_final_balance || 0]);
+  rows.push(['Verificación', data.resumen?.cuadra ? '✓ CUADRADO' : '✗ DESCUADRE']);
+
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [
-    { wch: 40 },
-    { wch: 18 },
-  ];
-  
+  ws['!cols'] = [{ wch: 45 }, { wch: 18 }, { wch: 18 }];
   XLSX.utils.book_append_sheet(workbook, ws, 'Flujos Efectivo');
+
+  // ── Hoja 2: Tabla de Variaciones ──────────────────────────────────
+  if (data.variaciones?.length > 0) {
+    const varRows = [
+      ['ANÁLISIS DE VARIACIONES'],
+      [data.empresa?.razon_social || ''],
+      [`Del ${data.periodo?.inicio} al ${data.periodo?.fin}`],
+      [],
+      ['Código', 'Cuenta', 'Saldo Inicial', 'Saldo Final', 'Variación', 'Clasificación', 'Efecto EFE'],
+    ];
+    data.variaciones.forEach(v => {
+      varRows.push([
+        v.codigo, v.nombre, v.saldo_inicial, v.saldo_final,
+        v.variacion, v.clasificacion, v.efecto_efe || 0,
+      ]);
+    });
+    const wsVar = XLSX.utils.aoa_to_sheet(varRows);
+    wsVar['!cols'] = [
+      { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 16 },
+      { wch: 16 }, { wch: 10 }, { wch: 16 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, wsVar, 'Variaciones');
+  }
 }
 
 export default DescargarExcel;

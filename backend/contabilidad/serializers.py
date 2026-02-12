@@ -187,7 +187,7 @@ class AsientoContableSerializer(serializers.ModelSerializer):
     class Meta:
         model = AsientoContable
         fields = [
-            "id", "empresa", "numero", "fecha", "concepto", "tercero", "tercero_nombre",
+            "id", "empresa", "tipo_comprobante", "numero", "fecha", "concepto", "tercero", "tercero_nombre",
             "descripcion", "descripcion_adicional",
             "fiscal_year", "fiscal_period",
             "movimientos", "estado", "anulado_por", "anulado_en", "anulacion_motivo", "ajusta_a",
