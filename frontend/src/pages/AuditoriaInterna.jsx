@@ -294,13 +294,16 @@ export default function AuditoriaInterna() {
           {/* ====== NUMERACIÓN ====== */}
           {tab === "numeracion" && Array.isArray(data) && (
             <div className="space-y-4">
-              {data.map(r => (
-                <div key={r.anio} className={`border rounded-lg p-4 ${r.estado === 'OK' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+              {data.map((r, i) => (
+                <div key={i} className={`border rounded-lg p-4 ${r.estado === 'OK' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-bold text-lg">Año {r.anio}</h3>
+                    <h3 className="font-bold text-lg">
+                      <span className="font-mono bg-white px-2 py-0.5 rounded border mr-2">{r.tipo}</span>
+                      {r.tipo_nombre} — Año {r.anio}
+                    </h3>
                     <Badge color={r.estado === 'OK' ? "green" : "red"}>{r.estado}</Badge>
                   </div>
-                  <p className="text-sm">Total asientos: {r.total_asientos} • Rango: {r.rango}</p>
+                  <p className="text-sm">Total: {r.total_asientos} • Rango: {r.rango}</p>
                   {r.total_gaps > 0 && (
                     <div className="mt-2 text-sm">
                       <p className="text-red-700 font-medium">⚠️ {r.total_gaps} número(s) faltante(s):</p>

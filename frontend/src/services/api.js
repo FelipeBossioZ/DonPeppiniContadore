@@ -106,6 +106,7 @@ export async function getAsientos(filters = {}) {
   if (filters.empresa) params.empresa = filters.empresa;
   if (filters.fecha_inicio) params.fecha_inicio = filters.fecha_inicio;
   if (filters.fecha_fin) params.fecha_fin = filters.fecha_fin;
+  if (filters.tipo_comprobante) params.tipo_comprobante = filters.tipo_comprobante;
   if (filters.page) params.page = filters.page;
   const { data } = await instance.get('/contabilidad/asientos/', { params });
   return data;

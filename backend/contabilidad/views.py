@@ -126,6 +126,9 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
             qs = qs.filter(fecha__gte=fi)
         if ff:
             qs = qs.filter(fecha__lte=ff)
+        tipo = self.request.query_params.get('tipo_comprobante')
+        if tipo:
+            qs = qs.filter(tipo_comprobante=tipo)
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -171,7 +174,7 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
                 asiento_id = response.data.get('id')
                 asiento = AsientoContable.objects.get(id=asiento_id)
                 _log_auditoria(request, asiento.empresa, 'crear_asiento',
-                    f"Asiento #{asiento.numero} - {asiento.concepto}", asiento=asiento)
+                    f"{asiento.tipo_comprobante}-{asiento.numero:04d} - {asiento.concepto}", asiento=asiento)
             except Exception:
                 pass
         return response
@@ -223,9 +226,10 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
         ajuste = AsientoContable.objects.create(
             empresa=asiento.empresa,
             fecha=hoy,
+            tipo_comprobante='AJ',
             fiscal_year=asiento.fiscal_year,
             fiscal_period=asiento.fiscal_period,
-            concepto=f"AJUSTE POR ANULACIÓN del asiento #{asiento.id}",
+            concepto=f"AJUSTE POR ANULACIÓN del {asiento.tipo_comprobante}-{asiento.numero:04d}",
             tercero=asiento.tercero,
             descripcion_adicional=f"Motivo: {motivo}",
         )
@@ -249,7 +253,7 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
         es_correccion = "Corrección rápida" in motivo
         accion = 'corregir_asiento' if es_correccion else 'anular_asiento'
         _log_auditoria(request, asiento.empresa, accion,
-            f"Asiento #{asiento.numero} anulado. Motivo: {motivo}. Ajuste: #{ajuste.numero}",
+            f"{asiento.tipo_comprobante}-{asiento.numero:04d} anulado. Motivo: {motivo}. Ajuste: {ajuste.tipo_comprobante}-{ajuste.numero:04d}",
             asiento=asiento, asiento_relacionado=ajuste)
 
         return Response({"detail": "Asiento anulado y ajuste generado", "ajuste_id": ajuste.id}, status=200)
@@ -281,7 +285,7 @@ class LibroDiarioView(views.APIView):
         for m in movimientos:
             data.append({
                 'fecha': m.asiento.fecha,
-                'asiento_id': m.asiento.id,
+                'asiento_id': f"{m.asiento.tipo_comprobante or 'OT'}-{m.asiento.numero:04d}",
                 'tercero': getattr(m.asiento.tercero, 'nombre_razon_social', None),
                 'codigo_cuenta': m.cuenta.codigo,
                 'nombre_cuenta': m.cuenta.nombre,
@@ -293,13 +297,31 @@ class LibroDiarioView(views.APIView):
 
         formato = request.query_params.get('formato', 'json')
         if formato == 'xlsx':
+            from empresas.models import Empresa
             wb = Workbook()
             ws = wb.active
             ws.title = "Libro Diario"
-            headers = ['Fecha', 'Asiento', 'Tercero', 'Cuenta', 'Nombre Cuenta', 'Concepto', 'Notas', 'Débito', 'Crédito']
+
+            empresa_nombre = "EMPRESA"
+            empresa_nit = ""
+            if empresa_id:
+                try:
+                    emp = Empresa.objects.get(id=empresa_id)
+                    empresa_nombre = emp.razon_social
+                    empresa_nit = emp.nit
+                except Empresa.DoesNotExist:
+                    pass
+
+            ws.append([f"{empresa_nombre}   NIT: {empresa_nit}"])
+            ws.cell(1, 1).font = Font(bold=True, size=12)
+            ws.append([f"Libro Diario   {fi or ''} a {ff or ''}"])
+            ws.cell(2, 1).font = Font(bold=True)
+            ws.append([])
+
+            headers = ['Fecha', 'Comprobante', 'Tercero', 'Cuenta', 'Nombre Cuenta', 'Concepto', 'Notas', 'Débito', 'Crédito']
             ws.append(headers)
             for h in range(1, len(headers)+1):
-                ws.cell(1, h).font = Font(bold=True)
+                ws.cell(4, h).font = Font(bold=True)
             for d in data:
                 ws.append([
                     str(d['fecha']), d['asiento_id'], d['tercero'],
@@ -384,13 +406,25 @@ class BalancePruebasView(views.APIView):
 
         formato = request.query_params.get("formato")
         if formato == "xlsx":
+            from empresas.models import Empresa
             wb = Workbook()
             ws = wb.active
             ws.title = "Balance de Prueba"
 
-            ws["A1"] = "NOMBRE DE LA EMPRESA + NIT"
-            ws["A2"] = f"Balance de Prueba   {ff or fi or ''}"
-            ws["A1"].font = ws["A2"].font = Font(bold=True)
+            empresa_nombre = "EMPRESA"
+            empresa_nit = ""
+            if empresa_id:
+                try:
+                    emp = Empresa.objects.get(id=empresa_id)
+                    empresa_nombre = emp.razon_social
+                    empresa_nit = emp.nit
+                except Empresa.DoesNotExist:
+                    pass
+
+            ws["A1"] = f"{empresa_nombre}   NIT: {empresa_nit}"
+            ws["A2"] = f"Balance de Prueba   {fi or ''} a {ff or ''}"
+            ws["A1"].font = Font(bold=True, size=12)
+            ws["A2"].font = Font(bold=True)
 
             headers = ["Cuenta","Nombre Cuenta contable","Saldo inicial","Débitos","Créditos","Saldo final"]
             ws.append(headers)
@@ -585,15 +619,28 @@ class BalancePorTercerosView(views.APIView):
         # --- Formato Excel ---
         formato = request.query_params.get('formato')
         if formato == 'xlsx':
+            from empresas.models import Empresa
             wb = Workbook()
             ws = wb.active
             ws.title = "Balance por Terceros"
 
-            ws['A1'] = "Balance por Terceros"
-            ws['A1'].font = Font(bold=True, size=14)
-            ws['A2'] = f"Período: {fi or 'Inicio'} a {ff or 'Fin'}"
+            empresa_nombre = "EMPRESA"
+            empresa_nit = ""
+            if empresa_id:
+                try:
+                    emp = Empresa.objects.get(id=empresa_id)
+                    empresa_nombre = emp.razon_social
+                    empresa_nit = emp.nit
+                except Empresa.DoesNotExist:
+                    pass
+
+            ws['A1'] = f"{empresa_nombre}   NIT: {empresa_nit}"
+            ws['A1'].font = Font(bold=True, size=12)
+            ws['A2'] = "Balance por Terceros"
+            ws['A2'].font = Font(bold=True, size=14)
+            ws['A3'] = f"Período: {fi or 'Inicio'} a {ff or 'Fin'}"
             if cuenta_prefijo:
-                ws['A3'] = f"Filtro cuenta: {cuenta_prefijo}*"
+                ws['A4'] = f"Filtro cuenta: {cuenta_prefijo}*"
 
             headers = ['Cuenta', 'Nombre Cuenta', 'Documento', 'Tercero', 'Saldo Inicial', 'Débitos', 'Créditos', 'Saldo Final']
             ws.append([])
@@ -684,7 +731,7 @@ class LibroMayorView(views.APIView):
             saldo += m.debito - m.credito
             detalle.append({
                 'fecha': m.asiento.fecha,
-                'asiento_id': m.asiento.id,
+                'asiento_id': f"{m.asiento.tipo_comprobante or 'OT'}-{m.asiento.numero:04d}",
                 'tercero': getattr(m.asiento.tercero, 'nombre_razon_social', None),
                 'concepto': m.asiento.concepto,
                 'debito': m.debito,
@@ -694,17 +741,33 @@ class LibroMayorView(views.APIView):
 
         formato = request.query_params.get('formato', 'json')
         if formato == 'xlsx':
+            from empresas.models import Empresa
             wb = Workbook()
             ws = wb.active
             ws.title = f"Libro Mayor {cuenta.codigo}"
+
+            empresa_nombre = "EMPRESA"
+            empresa_nit = ""
+            if hasattr(cuenta, 'empresa_id') and cuenta.empresa_id:
+                try:
+                    emp = Empresa.objects.get(id=cuenta.empresa_id)
+                    empresa_nombre = emp.razon_social
+                    empresa_nit = emp.nit
+                except Empresa.DoesNotExist:
+                    pass
+
+            ws.append([f"{empresa_nombre}   NIT: {empresa_nit}"])
+            ws.cell(1, 1).font = Font(bold=True, size=12)
+            ws.append([f"Libro Mayor"])
+            ws.cell(2, 1).font = Font(bold=True)
             ws.append([f"Cuenta: {cuenta.codigo} - {cuenta.nombre}"])
             ws.append([f"Periodo: {fecha_inicio or 'Inicio'} a {fecha_fin or 'Fin'}"])
             ws.append([f"Saldo Inicial: {float(saldo_inicial)}"])
             ws.append([])
-            headers = ['Fecha', 'Asiento', 'Tercero', 'Concepto', 'Débito', 'Crédito', 'Saldo']
+            headers = ['Fecha', 'Comprobante', 'Tercero', 'Concepto', 'Débito', 'Crédito', 'Saldo']
             ws.append(headers)
             for h in range(1, len(headers)+1):
-                ws.cell(5, h).font = Font(bold=True)
+                ws.cell(7, h).font = Font(bold=True)
             for d in detalle:
                 ws.append([
                     str(d['fecha']), d['asiento_id'], d['tercero'], d['concepto'],
@@ -948,7 +1011,7 @@ class ImportarAsientosView(views.APIView):
     def _procesar_excel(self, df, empresa, preview=False):
         # Buscar encabezados
         header_row = None
-        keywords = ['fecha', 'cuenta', 'código', 'codigo', 'débito', 'debito', 'crédito', 'credito']
+        keywords = ['fecha', 'cuenta', 'código', 'codigo', 'débito', 'debito', 'crédito', 'credito', 'n°']
         for i, row in df.iterrows():
             row_str = ' '.join(str(v).lower() for v in row.values if pd.notna(v))
             if any(kw in row_str for kw in keywords):
@@ -965,12 +1028,20 @@ class ImportarAsientosView(views.APIView):
         # Mapear columnas
         col_map = {}
         for col in df.columns:
-            cl = str(col).lower()
-            if 'fecha' in cl:
+            cl = str(col).lower().strip()
+            if cl in ('n°', 'no', 'num', 'numero', 'número', '#', 'n'):
+                col_map['numero'] = col
+            elif 'fecha' in cl:
                 col_map['fecha'] = col
-            elif 'codigo' in cl or 'código' in cl or cl == 'cuenta':
+            elif 'codigo' in cl or 'código' in cl or (cl == 'cuenta' and 'cuenta' not in col_map):
                 col_map['cuenta'] = col
-            elif 'concepto' in cl or 'descripcion' in cl:
+            elif 'nombre' in cl or (cl == 'cuenta' and 'cuenta' in col_map):
+                col_map['nombre_cuenta'] = col
+            elif 'tercero' in cl or 'nit' in cl:
+                col_map['tercero'] = col
+            elif 'centro' in cl:
+                col_map['centro'] = col
+            elif 'concepto' in cl or 'descripcion' in cl or 'descripción' in cl or 'detalle' in cl:
                 col_map['concepto'] = col
             elif 'debito' in cl or 'débito' in cl or 'debe' in cl:
                 col_map['debito'] = col
@@ -980,38 +1051,64 @@ class ImportarAsientosView(views.APIView):
         if 'cuenta' not in col_map:
             return {'error': 'No se encontró columna de cuenta/código', 'columnas': list(df.columns)}
         
+        # Determinar modo de agrupación: por N° o por fecha
+        use_numero = 'numero' in col_map
+        
         # Procesar filas
         asientos = []
         current_asiento = None
         current_movs = []
+        current_key = None  # N° del asiento o fecha
         
         for idx, row in df.iterrows():
-            fecha_val = row.get(col_map.get('fecha'))
+            # Determinar si es un nuevo asiento
+            new_asiento = False
+            fecha = None
+            numero = None
             
-            # Nueva fecha = nuevo asiento
+            if use_numero:
+                num_val = row.get(col_map.get('numero'))
+                if pd.notna(num_val):
+                    num_str = str(num_val).replace('.0', '').strip()
+                    if num_str and num_str != current_key:
+                        new_asiento = True
+                        current_key = num_str
+                        numero = num_str
+            
+            fecha_val = row.get(col_map.get('fecha'))
             if pd.notna(fecha_val):
                 try:
                     if isinstance(fecha_val, (datetime, pd.Timestamp)):
                         fecha = fecha_val.date() if hasattr(fecha_val, 'date') else fecha_val
                     else:
                         fecha = pd.to_datetime(fecha_val).date()
-                    
-                    # Guardar asiento anterior
-                    if current_asiento and current_movs:
-                        current_asiento['movimientos'] = current_movs
-                        current_asiento['total_debito'] = sum(m['debito'] for m in current_movs)
-                        current_asiento['total_credito'] = sum(m['credito'] for m in current_movs)
-                        current_asiento['cuadra'] = abs(current_asiento['total_debito'] - current_asiento['total_credito']) < 1
-                        asientos.append(current_asiento)
-                    
-                    concepto = str(row.get(col_map.get('concepto', ''), '')).strip()
-                    current_asiento = {
-                        'fecha': fecha.isoformat(),
-                        'concepto': concepto or f'Asiento del {fecha}',
-                    }
-                    current_movs = []
+                    if not use_numero:
+                        new_asiento = True
                 except:
                     pass
+            
+            if new_asiento:
+                # Guardar asiento anterior
+                if current_asiento and current_movs:
+                    current_asiento['movimientos'] = current_movs
+                    current_asiento['total_debito'] = sum(m['debito'] for m in current_movs)
+                    current_asiento['total_credito'] = sum(m['credito'] for m in current_movs)
+                    current_asiento['cuadra'] = abs(current_asiento['total_debito'] - current_asiento['total_credito']) < 1
+                    asientos.append(current_asiento)
+                
+                concepto = str(row.get(col_map.get('concepto', ''), '')).strip()
+                if concepto == 'nan':
+                    concepto = ''
+                current_asiento = {
+                    'numero': numero or '',
+                    'fecha': fecha.isoformat() if fecha else '',
+                    'concepto': concepto or f'Asiento {numero or ""}',
+                }
+                current_movs = []
+            
+            # Update fecha if we have it (in N° mode, fecha might appear on first row)
+            if fecha and current_asiento and not current_asiento.get('fecha'):
+                current_asiento['fecha'] = fecha.isoformat()
             
             # Agregar movimiento
             cuenta_codigo = row.get(col_map.get('cuenta'))
@@ -1023,6 +1120,16 @@ class ImportarAsientosView(views.APIView):
                 debito = self._parse_num(row.get(col_map.get('debito', ''), 0))
                 credito = self._parse_num(row.get(col_map.get('credito', ''), 0))
                 
+                # Concepto del movimiento (descripción individual)
+                mov_concepto = str(row.get(col_map.get('concepto', ''), '')).strip()
+                if mov_concepto == 'nan':
+                    mov_concepto = ''
+                
+                # Tercero
+                tercero_val = str(row.get(col_map.get('tercero', ''), '')).strip()
+                if tercero_val == 'nan':
+                    tercero_val = ''
+                
                 if debito > 0 or credito > 0:
                     current_movs.append({
                         'cuenta_codigo': cuenta_codigo,
@@ -1030,6 +1137,8 @@ class ImportarAsientosView(views.APIView):
                         'cuenta_id': cuenta.id if cuenta else None,
                         'debito': debito,
                         'credito': credito,
+                        'concepto': mov_concepto,
+                        'tercero': tercero_val,
                         'valido': cuenta is not None,
                     })
         
@@ -1559,118 +1668,386 @@ class EstadoCambiosPatrimonioView(views.APIView):
 
 class EstadoFlujosEfectivoView(views.APIView):
     """
-    🎩 Estado de Flujos de Efectivo - Método Indirecto
+    🎩 Estado de Flujos de Efectivo - Método Indirecto con modelo CTNO
     
-    Estructura según Sección 7 NIIF para Pymes
+    GET /api/contabilidad/niif/flujos-efectivo/
+    Params: empresa, fecha_inicio, fecha_fin
+    
+    Genera automáticamente:
+    1. Tabla de variaciones con clasificación por cuenta
+    2. EFE completo con EGO, Variación CTNO, EAI, EAF
+    3. Verificación cruzada con balance
     """
     permission_classes = [IsAuthenticated]
+
+    # ── Reglas de clasificación por prefijo PUC ──────────────────────────
+    # Orden: de más específico a más general (el primero que haga match gana)
+    CLASIFICACION_RULES = [
+        # EFECTIVO (verificación)
+        ('110', 'VERIF'),   # Caja
+        ('111', 'VERIF'),   # Bancos
+        ('112', 'VERIF'),   # Cuentas de ahorro
+        ('11',  'VERIF'),   # Todo disponible
+
+        # PARTIDAS QUE NO AFECTAN EFECTIVO
+        ('1592', 'NO-EF'),  # Depreciación acumulada PPE
+        ('1598', 'NO-EF'),  # Depreciación acumulada otros
+        ('1699', 'NO-EF'),  # Amortización acumulada intangibles
+        ('1499', 'NO-EF'),  # Provisiones inventarios
+
+        # ACTIVOS OPERATIVOS CORRIENTES (CTNO-A)
+        ('13',   'CTNO-A'), # Deudores / CxC
+        ('14',   'CTNO-A'), # Inventarios
+        ('1705', 'CTNO-A'), # Gastos pagados por anticipado (operacional)
+        ('240810', 'CTNO-A'), # IVA descontable (es un activo)
+
+        # INVERSIÓN (EAI)
+        ('12',   'EAI'),    # Inversiones
+        ('15',   'EAI'),    # Propiedad, Planta y Equipo
+        ('16',   'EAI'),    # Intangibles
+        ('17',   'EAI'),    # Diferidos (no operacionales → inversión)
+        ('18',   'EAI'),    # Otros activos no corrientes
+        ('19',   'EAI'),    # Valorizaciones
+
+        # PASIVOS OPERATIVOS CORRIENTES (CTNO-P)
+        ('22',   'CTNO-P'), # Proveedores
+        ('23',   'CTNO-P'), # CxP, Retenciones, Aportes
+        ('2408', 'CTNO-P'), # IVA (generado = pasivo)
+        ('24',   'CTNO-P'), # Impuestos
+        ('25',   'CTNO-P'), # Obligaciones laborales
+        ('26',   'CTNO-P'), # Otros pasivos corrientes
+        ('27',   'CTNO-P'), # Diferidos pasivos
+        ('28',   'CTNO-P'), # Otros pasivos
+
+        # FINANCIACIÓN (EAF)
+        ('21',   'EAF'),    # Obligaciones financieras
+        ('29',   'EAF'),    # Bonos y papeles comerciales
+        ('3',    'EAF'),    # Patrimonio
+    ]
+
+    def _clasificar_cuenta(self, codigo):
+        """Clasifica una cuenta según su código PUC"""
+        for prefijo, clasificacion in self.CLASIFICACION_RULES:
+            if codigo.startswith(prefijo):
+                return clasificacion
+        return 'CTNO-A'  # Default: operativo
+
+    def _nombre_grupo(self, codigo):
+        """Agrupa cuentas para presentación resumida en el EFE"""
+        GRUPOS = {
+            '1105': 'Caja',
+            '1110': 'Bancos',
+            '1112': 'Cuentas de ahorro',
+            '13':   'Deudores comerciales',
+            '1355': 'Anticipos de impuestos',
+            '14':   'Inventarios',
+            '1499': 'Provisión inventarios',
+            '1592': 'Depreciación acumulada',
+            '1598': 'Depreciación acum. otros',
+            '1699': 'Amortización acumulada',
+            '1705': 'Gastos anticipados',
+            '15':   'Propiedad, planta y equipo',
+            '16':   'Intangibles',
+            '17':   'Diferidos / Intangibles',
+            '12':   'Inversiones',
+            '21':   'Obligaciones financieras',
+            '22':   'Proveedores',
+            '2335': 'Costos y gastos por pagar',
+            '2365': 'Retención en la fuente',
+            '2367': 'IVA retenido',
+            '2370': 'Retenciones nómina',
+            '2408': 'IVA',
+            '240810': 'IVA descontable',
+            '2505': 'Salarios por pagar',
+            '2510': 'Cesantías',
+            '2515': 'Int. cesantías',
+            '2520': 'Prima de servicios',
+            '2525': 'Vacaciones',
+            '25':   'Obligaciones laborales',
+            '31':   'Capital social',
+            '33':   'Reservas',
+            '34':   'Revalorización patrimonio',
+            '36':   'Resultados ejercicio',
+            '37':   'Resultados ej. anteriores',
+            '38':   'Superávit',
+        }
+        for prefijo, nombre in sorted(GRUPOS.items(), key=lambda x: -len(x[0])):
+            if codigo.startswith(prefijo):
+                return nombre
+        return 'Otro'
 
     def get(self, request):
         empresa_id = request.query_params.get('empresa')
         fecha_inicio = request.query_params.get('fecha_inicio')
         fecha_fin = request.query_params.get('fecha_fin')
-        
+
         if not all([empresa_id, fecha_inicio, fecha_fin]):
-            return Response({'error': 'Empresa, fecha_inicio y fecha_fin son requeridos'}, status=400)
-        
+            return Response({
+                'error': 'Empresa, fecha_inicio y fecha_fin son requeridos'
+            }, status=400)
+
         try:
             empresa = Empresa.objects.get(id=empresa_id)
         except Empresa.DoesNotExist:
             return Response({'error': 'Empresa no encontrada'}, status=404)
-        
-        def variacion_cuenta(prefijo, fecha_ini, fecha_corte):
-            """Calcula la variación de una cuenta entre dos fechas"""
-            saldo_inicial = MovimientoContable.objects.filter(
+
+        # ── 1. CALCULAR RESULTADO NETO ──────────────────────────────────
+        def saldo_clase(clase_prefix):
+            agg = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
-                asiento__fecha__lt=fecha_ini,
+                asiento__fecha__gte=fecha_inicio,
+                asiento__fecha__lte=fecha_fin,
                 asiento__estado='vigente',
-                cuenta__codigo__startswith=prefijo
+                cuenta__codigo__startswith=clase_prefix
             ).aggregate(
-                debitos=Coalesce(Sum('debito'), Decimal('0')),
-                creditos=Coalesce(Sum('credito'), Decimal('0'))
+                d=Coalesce(Sum('debito'), Decimal('0')),
+                c=Coalesce(Sum('credito'), Decimal('0'))
             )
-            
-            saldo_final = MovimientoContable.objects.filter(
+            if clase_prefix == '4':
+                return agg['c'] - agg['d']  # Ingresos: naturaleza crédito
+            return agg['d'] - agg['c']  # Gastos/Costos: naturaleza débito
+
+        ingresos = saldo_clase('4')
+        gastos = saldo_clase('5')
+        costos = saldo_clase('6')
+        resultado_neto = ingresos - gastos - costos
+
+        # ── 2. CALCULAR VARIACIONES POR CUENTA ──────────────────────────
+        # Obtener todas las cuentas con movimientos en el periodo o antes
+        cuentas_con_movimiento = MovimientoContable.objects.filter(
+            asiento__empresa=empresa,
+            asiento__fecha__lte=fecha_fin,
+            asiento__estado='vigente',
+            cuenta__codigo__regex=r'^[1-3]'  # Solo balance (1,2,3)
+        ).values(
+            'cuenta__codigo',
+            'cuenta__nombre'
+        ).distinct()
+
+        variaciones = []
+        for c in cuentas_con_movimiento:
+            codigo = c['cuenta__codigo']
+            nombre = c['cuenta__nombre']
+
+            # Saldo inicial (antes del periodo)
+            si = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
-                asiento__fecha__lte=fecha_corte,
+                asiento__fecha__lt=fecha_inicio,
                 asiento__estado='vigente',
-                cuenta__codigo__startswith=prefijo
+                cuenta__codigo=codigo
             ).aggregate(
-                debitos=Coalesce(Sum('debito'), Decimal('0')),
-                creditos=Coalesce(Sum('credito'), Decimal('0'))
+                d=Coalesce(Sum('debito'), Decimal('0')),
+                c=Coalesce(Sum('credito'), Decimal('0'))
             )
-            
-            ini = saldo_inicial['debitos'] - saldo_inicial['creditos']
-            fin = saldo_final['debitos'] - saldo_final['creditos']
-            return fin - ini
-        
-        # 1. RESULTADO DEL PERIODO
-        ingresos = MovimientoContable.objects.filter(
-            asiento__empresa=empresa,
-            asiento__fecha__gte=fecha_inicio,
-            asiento__fecha__lte=fecha_fin,
-            asiento__estado='vigente',
-            cuenta__codigo__startswith='4'
-        ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
-        
-        gastos = MovimientoContable.objects.filter(
-            asiento__empresa=empresa,
-            asiento__fecha__gte=fecha_inicio,
-            asiento__fecha__lte=fecha_fin,
-            asiento__estado='vigente',
-            cuenta__codigo__startswith='5'
-        ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
-        
-        costos = MovimientoContable.objects.filter(
-            asiento__empresa=empresa,
-            asiento__fecha__gte=fecha_inicio,
-            asiento__fecha__lte=fecha_fin,
-            asiento__estado='vigente',
-            cuenta__codigo__startswith='6'
-        ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
-        
-        utilidad_neta = (ingresos['c'] - ingresos['d']) - (gastos['d'] - gastos['c']) - (costos['d'] - costos['c'])
-        
-        # 2. ACTIVIDADES DE OPERACIÓN (Método Indirecto)
-        # Ajustes por partidas que no afectan efectivo
-        var_depreciacion = variacion_cuenta('1592', fecha_inicio, fecha_fin) * -1  # Depreciación acumulada
-        
-        # Cambios en capital de trabajo
-        var_deudores = variacion_cuenta('13', fecha_inicio, fecha_fin) * -1  # Aumento = salida
-        var_inventarios = variacion_cuenta('14', fecha_inicio, fecha_fin) * -1
-        var_proveedores = variacion_cuenta('22', fecha_inicio, fecha_fin)  # Aumento = entrada
-        var_cxp = variacion_cuenta('23', fecha_inicio, fecha_fin)
-        var_impuestos = variacion_cuenta('24', fecha_inicio, fecha_fin)
-        var_obligaciones_lab = variacion_cuenta('25', fecha_inicio, fecha_fin)
-        
-        flujo_operacion = utilidad_neta + var_depreciacion + var_deudores + var_inventarios + var_proveedores + var_cxp + var_impuestos + var_obligaciones_lab
-        
-        # 3. ACTIVIDADES DE INVERSIÓN
-        var_inversiones = variacion_cuenta('12', fecha_inicio, fecha_fin) * -1
-        var_ppe = variacion_cuenta('15', fecha_inicio, fecha_fin) * -1  # PPE
-        var_intangibles = variacion_cuenta('16', fecha_inicio, fecha_fin) * -1
-        
-        flujo_inversion = var_inversiones + var_ppe + var_intangibles
-        
-        # 4. ACTIVIDADES DE FINANCIACIÓN
-        var_obligaciones_fin = variacion_cuenta('21', fecha_inicio, fecha_fin)  # Obligaciones financieras
-        var_capital = variacion_cuenta('31', fecha_inicio, fecha_fin) * -1  # Capital
-        
-        flujo_financiacion = var_obligaciones_fin + var_capital
-        
-        # 5. VARIACIÓN NETA DEL EFECTIVO
-        variacion_efectivo = flujo_operacion + flujo_inversion + flujo_financiacion
-        
-        # 6. EFECTIVO INICIAL Y FINAL
-        efectivo_inicial = MovimientoContable.objects.filter(
+            saldo_ini = si['d'] - si['c']
+
+            # Saldo final (hasta fin del periodo)
+            sf = MovimientoContable.objects.filter(
+                asiento__empresa=empresa,
+                asiento__fecha__lte=fecha_fin,
+                asiento__estado='vigente',
+                cuenta__codigo=codigo
+            ).aggregate(
+                d=Coalesce(Sum('debito'), Decimal('0')),
+                c=Coalesce(Sum('credito'), Decimal('0'))
+            )
+            saldo_fin = sf['d'] - sf['c']
+
+            variacion = saldo_fin - saldo_ini
+            clasificacion = self._clasificar_cuenta(codigo)
+
+            # Para EAI con amortización directa (17xx, 16xx),
+            # separar débitos (adquisiciones) y créditos (amortización)
+            debitos_periodo = Decimal('0')
+            creditos_periodo = Decimal('0')
+            if clasificacion == 'EAI' and (codigo.startswith('17') or codigo.startswith('16')):
+                period_movs = MovimientoContable.objects.filter(
+                    asiento__empresa=empresa,
+                    asiento__fecha__gte=fecha_inicio,
+                    asiento__fecha__lte=fecha_fin,
+                    asiento__estado='vigente',
+                    cuenta__codigo=codigo
+                ).aggregate(
+                    d=Coalesce(Sum('debito'), Decimal('0')),
+                    c=Coalesce(Sum('credito'), Decimal('0'))
+                )
+                debitos_periodo = period_movs['d']
+                creditos_periodo = period_movs['c']
+
+            if variacion != 0 or saldo_ini != 0 or saldo_fin != 0:
+                variaciones.append({
+                    'codigo': codigo,
+                    'nombre': nombre,
+                    'saldo_inicial': saldo_ini,
+                    'saldo_final': saldo_fin,
+                    'variacion': variacion,
+                    'clasificacion': clasificacion,
+                    'grupo': self._nombre_grupo(codigo),
+                    'debitos_periodo': debitos_periodo,
+                    'creditos_periodo': creditos_periodo,
+                })
+
+        # ── 3. CONSTRUIR EFE ────────────────────────────────────────────
+
+        # --- Partidas que no afectan efectivo (add-back) ---
+        partidas_no_ef = []
+        total_no_ef = Decimal('0')
+        for v in variaciones:
+            if v['clasificacion'] == 'NO-EF':
+                efecto = -v['variacion']  # Dep acumulada ↑ → efecto positivo
+                partidas_no_ef.append({
+                    'codigo': v['codigo'],
+                    'nombre': v['nombre'],
+                    'valor': float(efecto),
+                })
+                total_no_ef += efecto
+
+        # Para EAI con amortización directa: add-back los créditos (amortización)
+        for v in variaciones:
+            if v['clasificacion'] == 'EAI' and v['creditos_periodo'] > 0:
+                # El crédito en un diferido = amortización = no afecta efectivo
+                partidas_no_ef.append({
+                    'codigo': v['codigo'],
+                    'nombre': f"Amort. {v['nombre']}",
+                    'valor': float(v['creditos_periodo']),
+                })
+                total_no_ef += v['creditos_periodo']
+
+        ego = resultado_neto + total_no_ef
+
+        # --- Variación CTNO ---
+        # Agrupar por grupo para presentación limpia
+        ctno_items = {}
+        total_ctno = Decimal('0')
+        for v in variaciones:
+            if v['clasificacion'] in ('CTNO-A', 'CTNO-P'):
+                efecto = -v['variacion']  # Activo ↑ → efectivo ↓, Pasivo ↑ → efectivo ↑
+                grupo = v['grupo']
+                if grupo not in ctno_items:
+                    ctno_items[grupo] = {
+                        'nombre': grupo,
+                        'valor': Decimal('0'),
+                        'detalle': [],
+                    }
+                ctno_items[grupo]['valor'] += efecto
+                ctno_items[grupo]['detalle'].append({
+                    'codigo': v['codigo'],
+                    'nombre': v['nombre'],
+                    'variacion': float(v['variacion']),
+                    'efecto': float(efecto),
+                })
+                total_ctno += efecto
+
+        ctno_list = sorted(ctno_items.values(), key=lambda x: x['detalle'][0]['codigo'])
+        for item in ctno_list:
+            item['valor'] = float(item['valor'])
+
+        total_eao = ego + total_ctno
+
+        # --- Actividades de Inversión (EAI) ---
+        eai_items = {}
+        total_eai = Decimal('0')
+        for v in variaciones:
+            if v['clasificacion'] == 'EAI':
+                # Para cuentas con amortización directa, usar débitos brutos
+                if v['debitos_periodo'] > 0 or v['creditos_periodo'] > 0:
+                    efecto = -v['debitos_periodo']  # Solo cash out por adquisiciones
+                else:
+                    efecto = -v['variacion']  # PPE (dep es en cuenta separada)
+
+                if efecto != 0:
+                    grupo = v['grupo']
+                    if grupo not in eai_items:
+                        eai_items[grupo] = {
+                            'nombre': grupo,
+                            'valor': Decimal('0'),
+                            'detalle': [],
+                        }
+                    eai_items[grupo]['valor'] += efecto
+                    eai_items[grupo]['detalle'].append({
+                        'codigo': v['codigo'],
+                        'nombre': v['nombre'],
+                        'efecto': float(efecto),
+                    })
+                    total_eai += efecto
+
+        eai_list = sorted(eai_items.values(), key=lambda x: x['detalle'][0]['codigo'])
+        for item in eai_list:
+            item['valor'] = float(item['valor'])
+
+        # --- Actividades de Financiación (EAF) ---
+        eaf_items = {}
+        total_eaf = Decimal('0')
+        for v in variaciones:
+            if v['clasificacion'] == 'EAF':
+                efecto = -v['variacion']
+                # Patrimonio: aportes de capital ↑ → entrada de efectivo
+                # Obligaciones financieras ↑ → entrada de efectivo
+                if v['codigo'].startswith('2'):
+                    efecto = -v['variacion']  # Pasivo ↑ (variación negativa en D-C) → efecto positivo
+                elif v['codigo'].startswith('3'):
+                    efecto = -v['variacion']  # Patrimonio ↑ (variación negativa en D-C) → efecto positivo
+
+                if efecto != 0:
+                    grupo = v['grupo']
+                    if grupo not in eaf_items:
+                        eaf_items[grupo] = {
+                            'nombre': grupo,
+                            'valor': Decimal('0'),
+                            'detalle': [],
+                        }
+                    eaf_items[grupo]['valor'] += efecto
+                    eaf_items[grupo]['detalle'].append({
+                        'codigo': v['codigo'],
+                        'nombre': v['nombre'],
+                        'efecto': float(efecto),
+                    })
+                    total_eaf += efecto
+
+        eaf_list = sorted(eaf_items.values(), key=lambda x: x['detalle'][0]['codigo'])
+        for item in eaf_list:
+            item['valor'] = float(item['valor'])
+
+        # --- Resumen ---
+        variacion_neta = total_eao + total_eai + total_eaf
+
+        # Efectivo inicial y final (verificación)
+        ef_ini = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__fecha__lt=fecha_inicio,
             asiento__estado='vigente',
             cuenta__codigo__startswith='11'
-        ).aggregate(d=Coalesce(Sum('debito'), Decimal('0')), c=Coalesce(Sum('credito'), Decimal('0')))
-        
-        efectivo_final_calc = (efectivo_inicial['d'] - efectivo_inicial['c']) + variacion_efectivo
-        
+        ).aggregate(
+            d=Coalesce(Sum('debito'), Decimal('0')),
+            c=Coalesce(Sum('credito'), Decimal('0'))
+        )
+        efectivo_inicial = ef_ini['d'] - ef_ini['c']
+
+        ef_fin = MovimientoContable.objects.filter(
+            asiento__empresa=empresa,
+            asiento__fecha__lte=fecha_fin,
+            asiento__estado='vigente',
+            cuenta__codigo__startswith='11'
+        ).aggregate(
+            d=Coalesce(Sum('debito'), Decimal('0')),
+            c=Coalesce(Sum('credito'), Decimal('0'))
+        )
+        efectivo_final_balance = ef_fin['d'] - ef_fin['c']
+        efectivo_final_calc = efectivo_inicial + variacion_neta
+
+        cuadra = abs(efectivo_final_calc - efectivo_final_balance) < Decimal('1')
+
+        # ── 4. TABLA DE VARIACIONES (para exportación) ──────────────────
+        tabla_variaciones = [{
+            'codigo': v['codigo'],
+            'nombre': v['nombre'],
+            'saldo_inicial': float(v['saldo_inicial']),
+            'saldo_final': float(v['saldo_final']),
+            'variacion': float(v['variacion']),
+            'clasificacion': v['clasificacion'],
+            'efecto_efe': float(-v['variacion']) if v['clasificacion'] not in ('VERIF', 'EAI', 'EAF') else 0,
+        } for v in variaciones if v['variacion'] != 0]
+
         return Response({
             'empresa': {
                 'nit': empresa.nit,
@@ -1683,117 +2060,47 @@ class EstadoFlujosEfectivoView(views.APIView):
             'titulo': 'Estado de Flujos de Efectivo',
             'subtitulo': 'Método Indirecto',
             'norma': 'NIIF para Pymes - Sección 7',
-            
+
+            # EAO - Efectivo Actividades de Operación
             'operacion': {
-                'utilidad_neta': float(utilidad_neta),
-                'ajustes': {
-                    'depreciacion': float(var_depreciacion),
+                'resultado_neto': float(resultado_neto),
+                'detalle_resultado': {
+                    'ingresos': float(ingresos),
+                    'costos': float(costos),
+                    'gastos': float(gastos),
                 },
-                'cambios_capital_trabajo': {
-                    'deudores': float(var_deudores),
-                    'inventarios': float(var_inventarios),
-                    'proveedores': float(var_proveedores),
-                    'cuentas_por_pagar': float(var_cxp),
-                    'impuestos': float(var_impuestos),
-                    'obligaciones_laborales': float(var_obligaciones_lab),
-                },
-                'total': float(flujo_operacion),
+                'partidas_no_efectivo': partidas_no_ef,
+                'total_no_efectivo': float(total_no_ef),
+                'ego': float(ego),
+                'variacion_ctno': ctno_list,
+                'total_ctno': float(total_ctno),
+                'total': float(total_eao),
             },
-            
+
+            # EAI - Efectivo Actividades de Inversión
             'inversion': {
-                'inversiones': float(var_inversiones),
-                'propiedad_planta_equipo': float(var_ppe),
-                'intangibles': float(var_intangibles),
-                'total': float(flujo_inversion),
+                'items': eai_list,
+                'total': float(total_eai),
             },
-            
+
+            # EAF - Efectivo Actividades de Financiación
             'financiacion': {
-                'obligaciones_financieras': float(var_obligaciones_fin),
-                'aportes_capital': float(var_capital),
-                'total': float(flujo_financiacion),
+                'items': eaf_list,
+                'total': float(total_eaf),
             },
-            
+
+            # Resumen
             'resumen': {
-                'variacion_efectivo': float(variacion_efectivo),
-                'efectivo_inicial': float(efectivo_inicial['d'] - efectivo_inicial['c']),
-                'efectivo_final': float(efectivo_final_calc),
-            }
+                'variacion_neta': float(variacion_neta),
+                'efectivo_inicial': float(efectivo_inicial),
+                'efectivo_final_calculado': float(efectivo_final_calc),
+                'efectivo_final_balance': float(efectivo_final_balance),
+                'cuadra': cuadra,
+            },
+
+            # Tabla de variaciones completa
+            'variaciones': tabla_variaciones,
         })
-# ============================================================================
-# 🎩 MEDIOS MAGNÉTICOS DIAN - Don Peppini Contadore
-# AGREGAR AL FINAL DE contabilidad/views.py
-# ============================================================================
-
-from io import BytesIO
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from django.http import HttpResponse
-from django.db.models.functions import Coalesce
-
-
-# Mapeo de tipos de documento interno a códigos DIAN
-TIPO_DOC_DIAN = {
-    'RC': '11',   # Registro Civil
-    'TI': '12',   # Tarjeta de Identidad
-    'CC': '13',   # Cédula de Ciudadanía
-    'TE': '21',   # Tarjeta de Extranjería
-    'CE': '22',   # Cédula de Extranjería
-    'NIT': '31',  # NIT
-    'PA': '41',   # Pasaporte
-    'DIE': '42',  # Documento de Identificación Extranjero
-}
-
-
-def calcular_dv(nit):
-    """
-    Calcula el dígito de verificación de un NIT colombiano
-    Algoritmo módulo 11
-    """
-    try:
-        nit_str = str(nit).replace('.', '').replace(',', '').replace('-', '').strip()
-        factores = [3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71]
-        
-        suma = 0
-        for i, digito in enumerate(reversed(nit_str)):
-            if i < len(factores):
-                suma += int(digito) * factores[i]
-        
-        residuo = suma % 11
-        
-        if residuo == 0:
-            return '0'
-        elif residuo == 1:
-            return '1'
-        else:
-            return str(11 - residuo)
-    except:
-        return ''
-
-
-def get_tercero_mm_data(tercero):
-    """Extrae los datos de un tercero en formato Medios Magnéticos"""
-    tipo_doc_dian = TIPO_DOC_DIAN.get(tercero.tipo_documento, '13')
-    es_persona_juridica = tercero.tipo_documento == 'NIT'
-    
-    dv = tercero.digito_verificacion
-    if not dv and tercero.tipo_documento == 'NIT':
-        dv = calcular_dv(tercero.numero_documento)
-    
-    return {
-        'tipo_documento': tipo_doc_dian,
-        'numero_documento': tercero.numero_documento,
-        'dv': dv or '',
-        'primer_apellido': '' if es_persona_juridica else (tercero.primer_apellido or ''),
-        'segundo_apellido': '' if es_persona_juridica else (tercero.segundo_apellido or ''),
-        'primer_nombre': '' if es_persona_juridica else (tercero.primer_nombre or ''),
-        'otros_nombres': '' if es_persona_juridica else (tercero.otros_nombres or ''),
-        'razon_social': tercero.nombre_razon_social if es_persona_juridica else '',
-        'direccion': tercero.direccion or '',
-        'codigo_dpto': tercero.codigo_departamento or '',
-        'codigo_mcp': tercero.codigo_municipio or '',
-        'codigo_pais': tercero.codigo_pais or '169',
-    }
-
 
 class MediosMagneticosView(views.APIView):
     """
@@ -5026,7 +5333,7 @@ class DashboardDataView(views.APIView):
         ).order_by('mes_trunc')
         
         # Mapear resultados
-        datos_mes = {r['mes_trunc']: float(r['total']) for r in raw}
+        datos_mes = {r['mes_trunc'] if isinstance(r['mes_trunc'], date) else r['mes_trunc'].date(): float(r['total']) for r in raw}
         
         tendencia = []
         for i in range(meses - 1, -1, -1):
@@ -5280,23 +5587,31 @@ class PreviewCierreView(views.APIView):
     Muestra preview del cierre sin ejecutarlo
     POST /api/contabilidad/cierres/preview/
     Body: { empresa, tipo, año, mes? }
+    
+    NUEVO: Incluye estimación de impuesto de renta:
+    - Utilidad gravable × 35% = Impuesto bruto
+    - (-) Retenciones en la fuente a favor (1355xx)
+    - (-) Autorretenciones a favor (si aplica)
+    - = Impuesto neto estimado
     """
     permission_classes = [IsAuthenticated]
-    
+
+    TASA_RENTA = Decimal('0.35')  # 35% tarifa general
+
     def post(self, request):
         empresa_id = request.data.get('empresa')
         tipo = request.data.get('tipo', 'anual')
         año = int(request.data.get('año', datetime.now().year))
         mes = request.data.get('mes')
-        
+
         if not empresa_id:
             return Response({'error': 'Empresa requerida'}, status=400)
-        
+
         try:
             empresa = Empresa.objects.get(id=empresa_id)
         except Empresa.DoesNotExist:
             return Response({'error': 'Empresa no encontrada'}, status=404)
-        
+
         # Definir período
         if tipo == 'anual':
             fecha_inicio = date(año, 1, 1)
@@ -5306,7 +5621,7 @@ class PreviewCierreView(views.APIView):
             fecha_inicio = date(año, mes, 1)
             import calendar
             fecha_fin = date(año, mes, calendar.monthrange(año, mes)[1])
-        
+
         # Verificar si ya existe cierre
         existe = CierreContable.objects.filter(
             empresa=empresa,
@@ -5315,14 +5630,14 @@ class PreviewCierreView(views.APIView):
             mes=mes if tipo == 'mensual' else None,
             estado='cerrado'
         ).exists()
-        
+
         if existe:
             return Response({
                 'error': 'Ya existe un cierre para este período',
                 'ya_cerrado': True
             }, status=400)
-        
-        # Calcular saldos de cuentas de resultados
+
+        # ── Calcular saldos de cuentas de resultados ────────────────────
         def saldo_clase(clase):
             movs = MovimientoContable.objects.filter(
                 asiento__empresa=empresa,
@@ -5334,19 +5649,16 @@ class PreviewCierreView(views.APIView):
                 d=Coalesce(Sum('debito'), Decimal('0')),
                 c=Coalesce(Sum('credito'), Decimal('0'))
             )
-            # Clase 4 (Ingresos): naturaleza crédito
-            # Clase 5 y 6 (Gastos y Costos): naturaleza débito
             if clase == '4':
                 return movs['c'] - movs['d']
             return movs['d'] - movs['c']
-        
+
         ingresos = saldo_clase('4')
         gastos = saldo_clase('5')
         costos = saldo_clase('6')
-        
         resultado = ingresos - gastos - costos
-        
-        # Obtener detalle de cuentas a saldar
+
+        # ── Detalle de cuentas a saldar ─────────────────────────────────
         cuentas_a_saldar = []
         for clase in ['4', '5', '6']:
             cuentas = MovimientoContable.objects.filter(
@@ -5362,12 +5674,12 @@ class PreviewCierreView(views.APIView):
                 debitos=Sum('debito'),
                 creditos=Sum('credito')
             ).order_by('cuenta__codigo')
-            
+
             for c in cuentas:
                 saldo = c['debitos'] - c['creditos']
                 if clase == '4':
                     saldo = c['creditos'] - c['debitos']
-                
+
                 if saldo != 0:
                     cuentas_a_saldar.append({
                         'codigo': c['cuenta__codigo'],
@@ -5375,7 +5687,159 @@ class PreviewCierreView(views.APIView):
                         'saldo': float(saldo),
                         'accion': 'debitar' if clase == '4' else 'acreditar'
                     })
-        
+
+        # ════════════════════════════════════════════════════════════════
+        # 🎩 ESTIMACIÓN DE IMPUESTO DE RENTA
+        # ════════════════════════════════════════════════════════════════
+
+        impuesto_data = None
+        if resultado > 0:
+            # Solo calcular si hay utilidad (con pérdida no hay impuesto)
+            impuesto_bruto = resultado * self.TASA_RENTA
+
+            # ── Retenciones en la fuente a favor (activo 1355xx) ────────
+            # Estas son las retenciones que NOS practicaron a nosotros
+            retenciones_favor = MovimientoContable.objects.filter(
+                asiento__empresa=empresa,
+                asiento__fecha__gte=fecha_inicio,
+                asiento__fecha__lte=fecha_fin,
+                asiento__estado='vigente',
+                cuenta__codigo__startswith='1355'
+            ).values(
+                'cuenta__codigo',
+                'cuenta__nombre'
+            ).annotate(
+                debitos=Sum('debito'),
+                creditos=Sum('credito')
+            ).order_by('cuenta__codigo')
+
+            detalle_retenciones = []
+            total_retenciones = Decimal('0')
+            for r in retenciones_favor:
+                saldo = r['debitos'] - r['creditos']
+                if saldo > 0:
+                    detalle_retenciones.append({
+                        'codigo': r['cuenta__codigo'],
+                        'nombre': r['cuenta__nombre'],
+                        'valor': float(saldo),
+                    })
+                    total_retenciones += saldo
+
+            # ── Autorretenciones (activo 1355xx subcuentas específicas) ──
+            # Buscar también en cuentas de autorretención si existen
+            # Las autorretenciones de renta suelen estar en 135515, 135518
+            # Ya están incluidas arriba, pero las separamos para claridad
+
+            # ── Retenciones de IVA a favor (1357xx o 135517) ────────────
+            # Estas se cruzan contra el IVA, no contra renta
+            # Pero las mostramos como referencia
+            reteiva_favor = MovimientoContable.objects.filter(
+                asiento__empresa=empresa,
+                asiento__fecha__gte=fecha_inicio,
+                asiento__fecha__lte=fecha_fin,
+                asiento__estado='vigente',
+                cuenta__codigo__startswith='135517'
+            ).aggregate(
+                d=Coalesce(Sum('debito'), Decimal('0')),
+                c=Coalesce(Sum('credito'), Decimal('0'))
+            )
+            reteiva_saldo = reteiva_favor['d'] - reteiva_favor['c']
+
+            # ── Retenciones que hemos practicado (pasivo 2365xx) ────────
+            # Estas son las que DEBEMOS pagar a la DIAN (no se restan)
+            retenciones_practicadas = MovimientoContable.objects.filter(
+                asiento__empresa=empresa,
+                asiento__fecha__gte=fecha_inicio,
+                asiento__fecha__lte=fecha_fin,
+                asiento__estado='vigente',
+                cuenta__codigo__startswith='2365'
+            ).values(
+                'cuenta__codigo',
+                'cuenta__nombre'
+            ).annotate(
+                debitos=Sum('debito'),
+                creditos=Sum('credito')
+            ).order_by('cuenta__codigo')
+
+            detalle_practicadas = []
+            total_practicadas = Decimal('0')
+            for r in retenciones_practicadas:
+                saldo = r['creditos'] - r['debitos']  # Pasivo = crédito
+                if saldo > 0:
+                    detalle_practicadas.append({
+                        'codigo': r['cuenta__codigo'],
+                        'nombre': r['cuenta__nombre'],
+                        'valor': float(saldo),
+                    })
+                    total_practicadas += saldo
+
+            # ── Autorretenciones causadas (pasivo 2367xx o similar) ──────
+            # Autorretención de renta Decreto 2201/2016
+            autorretencion_renta = MovimientoContable.objects.filter(
+                asiento__empresa=empresa,
+                asiento__fecha__gte=fecha_inicio,
+                asiento__fecha__lte=fecha_fin,
+                asiento__estado='vigente',
+                cuenta__codigo__in=[
+                    '236575',  # Autorretención renta
+                    '236580',  # Autorretención CREE/renta
+                ]
+            ).aggregate(
+                d=Coalesce(Sum('debito'), Decimal('0')),
+                c=Coalesce(Sum('credito'), Decimal('0'))
+            )
+            total_autorretencion = autorretencion_renta['c'] - autorretencion_renta['d']
+
+            # Solo considerar retenciones de fuente (no IVA) para renta
+            # Las 135515 son retefuente a favor, las 135517 son reteIVA
+            retefuente_a_favor = Decimal('0')
+            detalle_retefuente = []
+            for r in detalle_retenciones:
+                if not r['codigo'].startswith('135517'):  # Excluir ReteIVA
+                    retefuente_a_favor += Decimal(str(r['valor']))
+                    detalle_retefuente.append(r)
+
+            impuesto_neto = impuesto_bruto - retefuente_a_favor
+            if total_autorretencion > 0:
+                impuesto_neto -= total_autorretencion
+
+            impuesto_data = {
+                'utilidad_gravable': float(resultado),
+                'tasa': float(self.TASA_RENTA * 100),
+                'impuesto_bruto': float(impuesto_bruto),
+
+                # Retenciones a favor (activo 1355xx excluyendo ReteIVA)
+                'retenciones_a_favor': {
+                    'detalle': detalle_retefuente,
+                    'total': float(retefuente_a_favor),
+                },
+
+                # Autorretenciones de renta
+                'autorretenciones': {
+                    'total': float(total_autorretencion),
+                },
+
+                # ReteIVA (referencia, no se resta de renta)
+                'reteiva_a_favor': float(reteiva_saldo),
+
+                # Retenciones practicadas (referencia - lo que debemos)
+                'retenciones_practicadas': {
+                    'detalle': detalle_practicadas,
+                    'total': float(total_practicadas),
+                },
+
+                # NETO
+                'impuesto_neto': float(max(impuesto_neto, Decimal('0'))),
+                'saldo_a_favor': float(abs(impuesto_neto)) if impuesto_neto < 0 else 0,
+
+                'nota': (
+                    'Estimación basada en utilidad contable × 35%. '
+                    'El impuesto real puede variar por diferencias '
+                    'temporarias, deducciones y beneficios tributarios. '
+                    'Consultar con el asesor tributario para la declaración definitiva.'
+                ),
+            }
+
         return Response({
             'empresa': empresa.razon_social,
             'tipo': tipo,
@@ -5394,9 +5858,10 @@ class PreviewCierreView(views.APIView):
                 'codigo': '3605' if resultado >= 0 else '3610',
                 'nombre': 'Utilidad del ejercicio' if resultado >= 0 else 'Pérdida del ejercicio',
                 'valor': float(abs(resultado))
-            }
+            },
+            # 🎩 NUEVO: Estimación de impuesto
+            'impuesto_estimado': impuesto_data,
         })
-
 
 class EjecutarCierreView(views.APIView):
     """
@@ -6391,7 +6856,7 @@ class AuditoriaAnulacionesView(views.APIView):
 
 
 class AuditoriaNumeracionView(views.APIView):
-    """Detecta saltos en la numeración de asientos por año fiscal."""
+    """Detecta saltos en la numeración de asientos por tipo de comprobante y año fiscal."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -6405,14 +6870,14 @@ class AuditoriaNumeracionView(views.APIView):
         if anio:
             qs = qs.filter(fiscal_year=int(anio))
 
-        # Agrupar por año fiscal
         from collections import defaultdict
-        por_anio = defaultdict(list)
-        for a in qs.values('fiscal_year', 'numero', 'id', 'estado').order_by('fiscal_year', 'numero'):
-            por_anio[a['fiscal_year']].append(a)
+        por_tipo_anio = defaultdict(list)
+        for a in qs.values('fiscal_year', 'tipo_comprobante', 'numero', 'id', 'estado').order_by('tipo_comprobante', 'fiscal_year', 'numero'):
+            key = (a['tipo_comprobante'] or 'OT', a['fiscal_year'])
+            por_tipo_anio[key].append(a)
 
         resultado = []
-        for year, asientos in sorted(por_anio.items()):
+        for (tipo, year), asientos in sorted(por_tipo_anio.items()):
             numeros = sorted(set(a['numero'] for a in asientos))
             if not numeros:
                 continue
@@ -6421,7 +6886,6 @@ class AuditoriaNumeracionView(views.APIView):
                 if numeros[i+1] - numeros[i] > 1:
                     for missing in range(numeros[i]+1, numeros[i+1]):
                         gaps.append(missing)
-            # Verificar si empieza en 1
             if numeros[0] != 1:
                 for missing in range(1, numeros[0]):
                     gaps.insert(0, missing)
@@ -6433,11 +6897,14 @@ class AuditoriaNumeracionView(views.APIView):
                     duplicados.append(n)
                 seen.add(n)
 
+            tipo_labels = dict(AsientoContable.TIPOS_COMPROBANTE)
             resultado.append({
+                'tipo': tipo,
+                'tipo_nombre': tipo_labels.get(tipo, tipo),
                 'anio': year,
                 'total_asientos': len(asientos),
                 'rango': f"{numeros[0]} - {numeros[-1]}",
-                'gaps': gaps[:50],  # limitar
+                'gaps': gaps[:50],
                 'total_gaps': len(gaps),
                 'duplicados': list(set(duplicados)),
                 'total_duplicados': len(set(duplicados)),

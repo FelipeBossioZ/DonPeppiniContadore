@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Building2, Lock, Unlock, Calendar, Loader2, AlertCircle,
   CheckCircle, AlertTriangle, FileText, TrendingUp, TrendingDown,
-  Info, ChevronDown, ChevronUp, RefreshCw, X
+  Info, ChevronDown, ChevronUp, RefreshCw, X, Calculator
 } from 'lucide-react';
 import { useEmpresa } from '../context/EmpresaContext';
 import api from '../services/api';
@@ -413,6 +413,107 @@ export default function CierreContable() {
                       {preview.cuenta_destino.codigo} - {preview.cuenta_destino.nombre}
                     </div>
                   </div>
+
+                  {/* 🎩 ESTIMACIÓN DE IMPUESTO DE RENTA */}
+                  {preview.impuesto_estimado && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg overflow-hidden">
+                      <div className="px-4 py-3 bg-amber-100 border-b border-amber-200">
+                        <h3 className="font-semibold text-amber-900 flex items-center gap-2">
+                          <Calculator className="h-4 w-4" />
+                          Estimación Impuesto de Renta — Año Gravable {añoCierre}
+                        </h3>
+                      </div>
+                      <div className="p-4 space-y-3">
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-700">Utilidad gravable (contable)</span>
+                            <span className="font-mono font-medium">{formatMoney(preview.impuesto_estimado.utilidad_gravable)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm text-gray-500">
+                            <span>× Tarifa general ({preview.impuesto_estimado.tasa}%)</span>
+                            <span></span>
+                          </div>
+                          <div className="flex justify-between text-sm font-semibold border-t border-amber-200 pt-2">
+                            <span className="text-amber-800">Impuesto Bruto</span>
+                            <span className="font-mono text-amber-800">{formatMoney(preview.impuesto_estimado.impuesto_bruto)}</span>
+                          </div>
+                        </div>
+
+                        {preview.impuesto_estimado.retenciones_a_favor?.detalle?.length > 0 && (
+                          <div className="border-t border-amber-200 pt-2">
+                            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                              (-) Retenciones a favor (nos practicaron):
+                            </div>
+                            {preview.impuesto_estimado.retenciones_a_favor.detalle.map((r, i) => (
+                              <div key={i} className="flex justify-between text-sm pl-4 text-green-700">
+                                <span>{r.codigo} - {r.nombre}</span>
+                                <span className="font-mono">-{formatMoney(r.valor)}</span>
+                              </div>
+                            ))}
+                            <div className="flex justify-between text-sm font-medium pl-4 mt-1">
+                              <span>Total retenciones a favor</span>
+                              <span className="font-mono text-green-700">-{formatMoney(preview.impuesto_estimado.retenciones_a_favor.total)}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {preview.impuesto_estimado.autorretenciones?.total > 0 && (
+                          <div className="flex justify-between text-sm pl-4 text-green-700 border-t border-amber-200 pt-2">
+                            <span>(-) Autorretenciones renta</span>
+                            <span className="font-mono">-{formatMoney(preview.impuesto_estimado.autorretenciones.total)}</span>
+                          </div>
+                        )}
+
+                        <div className={`flex justify-between text-lg font-bold border-t-2 border-amber-300 pt-3 ${
+                          preview.impuesto_estimado.saldo_a_favor > 0 ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          <span>
+                            {preview.impuesto_estimado.saldo_a_favor > 0 
+                              ? '💰 Saldo a Favor'
+                              : '💸 Impuesto Neto a Pagar'
+                            }
+                          </span>
+                          <span className="font-mono">
+                            {formatMoney(
+                              preview.impuesto_estimado.saldo_a_favor > 0 
+                                ? preview.impuesto_estimado.saldo_a_favor
+                                : preview.impuesto_estimado.impuesto_neto
+                            )}
+                          </span>
+                        </div>
+
+                        {preview.impuesto_estimado.retenciones_practicadas?.total > 0 && (
+                          <details className="text-xs text-gray-500 mt-2">
+                            <summary className="cursor-pointer hover:text-gray-700">
+                              Retenciones practicadas (debemos a DIAN): {formatMoney(preview.impuesto_estimado.retenciones_practicadas.total)}
+                            </summary>
+                            <div className="mt-1 pl-4 space-y-0.5">
+                              {preview.impuesto_estimado.retenciones_practicadas.detalle.map((r, i) => (
+                                <div key={i} className="flex justify-between">
+                                  <span>{r.codigo} - {r.nombre}</span>
+                                  <span className="font-mono">{formatMoney(r.valor)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+
+                        <div className="bg-amber-100/50 rounded p-2 text-xs text-amber-800 mt-2">
+                          ⚠️ {preview.impuesto_estimado.nota}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!preview.impuesto_estimado && preview.resumen.resultado < 0 && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-600 flex items-center gap-2">
+                      <span className="text-lg">📋</span>
+                      <span>
+                        Con pérdida fiscal no se genera impuesto de renta. 
+                        La pérdida puede compensarse en años siguientes (máx. 12 períodos).
+                      </span>
+                    </div>
+                  )}
                   
                   {/* Cuentas a saldar (colapsable) */}
                   {preview.cuentas_a_saldar?.length > 0 && (

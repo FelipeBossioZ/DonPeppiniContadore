@@ -115,6 +115,24 @@ class AsientoContable(models.Model):
         verbose_name="Empresa"
     )
     
+    # === TIPO DE COMPROBANTE ===
+    TIPOS_COMPROBANTE = [
+        ('RC', 'Recibo de Caja'),
+        ('CE', 'Comprobante de Egreso'),
+        ('FV', 'Factura de Venta'),
+        ('FC', 'Factura de Compra'),
+        ('NM', 'Nómina'),
+        ('AJ', 'Ajustes'),
+        ('NC', 'Nota Crédito'),
+        ('ND', 'Nota Débito'),
+        ('CI', 'Comprobante de Ingreso'),
+        ('OT', 'Otros'),
+    ]
+    tipo_comprobante = models.CharField(
+        max_length=3, choices=TIPOS_COMPROBANTE, default='OT',
+        verbose_name="Tipo de Comprobante"
+    )
+    
     # === NUMERACIÓN ===
     numero = models.PositiveIntegerField(default=0, verbose_name="Número de Asiento")
     
@@ -147,10 +165,11 @@ class AsientoContable(models.Model):
         if not self.fiscal_period and self.fecha:
             self.fiscal_period = self.fecha.month
         
-        # Auto-numerar asientos por empresa y año
+        # Auto-numerar asientos por empresa, tipo de comprobante y año
         if not self.numero:
             ultimo = AsientoContable.objects.filter(
                 empresa=self.empresa,
+                tipo_comprobante=self.tipo_comprobante,
                 fiscal_year=self.fiscal_year
             ).order_by('-numero').first()
             self.numero = (ultimo.numero + 1) if ultimo else 1
@@ -158,13 +177,17 @@ class AsientoContable(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"Asiento #{self.numero} del {self.fecha} - {self.concepto}"
+        return f"{self.tipo_comprobante}-{self.numero:04d} del {self.fecha} - {self.concepto}"
+
+    @property
+    def comprobante_display(self):
+        return f"{self.tipo_comprobante}-{self.numero:04d}"
 
     class Meta:
         verbose_name = "Asiento Contable"
         verbose_name_plural = "Asientos Contables"
         ordering = ['-fecha', '-numero']
-        unique_together = ['empresa', 'fiscal_year', 'numero']
+        unique_together = ['empresa', 'tipo_comprobante', 'fiscal_year', 'numero']
 
 
 class MovimientoContable(models.Model):
