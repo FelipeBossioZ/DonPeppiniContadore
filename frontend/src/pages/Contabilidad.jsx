@@ -87,6 +87,7 @@ export default function Contabilidad() {
   // ---- modales varios ----
   const [openDet, setOpenDet] = useState(null);
   const [openAnular, setOpenAnular] = useState(null);
+  const [openCorregir, setOpenCorregir] = useState(null);
   const [pins, setPins] = useState({ motivo:"", contador_pin:"", gerente_pin:"" });
   const [openTercero, setOpenTercero] = useState(false);
   const [nuevoTer, setNuevoTer] = useState({ tipo_documento:"CC", numero_documento:"", digito_verificacion:"", nombre_razon_social:"", direccion:"", telefono:"", email:"" });
@@ -145,6 +146,49 @@ export default function Contabilidad() {
     setForm({ fecha: todayISO(), concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
     setMovRows([ { ...emptyRow }, { ...emptyRow } ]);
     setOpenForm(true);
+  }
+
+  function duplicateAsiento(a) {
+    setServerError(null);
+    setRowErrors({});
+    setForm({
+      fecha: todayISO(),
+      concepto: a.concepto || "",
+      tercero_id: a.tercero ? String(a.tercero) : "",
+      descripcion_adicional: a.descripcion_adicional || "",
+      es_ajuste: false,
+    });
+    const rows = (a.movimientos || []).map(m => ({
+      cuenta: m.cuenta_codigo_display ?? m.cuenta?.codigo ?? String(m.cuenta ?? ""),
+      tercero_id: m.tercero ? String(m.tercero) : "",
+      debito: Number(m.debito) || 0,
+      credito: Number(m.credito) || 0,
+    }));
+    setMovRows(rows.length >= 2 ? rows : [...rows, { ...emptyRow }, { ...emptyRow }].slice(0, Math.max(2, rows.length)));
+    setOpenForm(true);
+  }
+
+  // Corrección rápida: solo disponible dentro del mismo mes del asiento
+  function canCorregir(a) {
+    if (a.estado === "anulado") return false;
+    const hoy = new Date();
+    const fechaAsiento = new Date(a.fecha);
+    return hoy.getFullYear() === fechaAsiento.getFullYear()
+        && hoy.getMonth() === fechaAsiento.getMonth();
+  }
+
+  function onCorregirConfirm() {
+    const a = openCorregir;
+    if (!a) return;
+    anularM.mutate(
+      { id: a.id, motivo: `Corrección rápida → se creará asiento corregido` },
+      {
+        onSuccess: () => {
+          setOpenCorregir(null);
+          duplicateAsiento(a);
+        },
+      }
+    );
   }
 
   useEffect(() => {
@@ -431,8 +475,13 @@ export default function Contabilidad() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {asientos.map((a) => (
-                    <tr key={a.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">#{a.id}</td>
+                    <tr key={a.id} className={`hover:bg-gray-50 ${a.estado === "anulado" ? "opacity-50" : ""}`}>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        #{a.numero || a.id}
+                        {a.estado === "anulado" && (
+                          <span className="ml-2 px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded">Anulado</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         <div className="flex items-center">
                           <Calendar className="h-4 w-4 mr-2 text-gray-400" />
@@ -445,7 +494,13 @@ export default function Contabilidad() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <button className="text-indigo-600 hover:text-indigo-900 mr-3" onClick={()=>setOpenDet(a)}>Ver detalle</button>
-                        <button className="text-red-600 hover:text-red-900" onClick={()=>setOpenAnular(a)}>Anular</button>
+                        <button className="text-emerald-600 hover:text-emerald-900 mr-3" onClick={()=>duplicateAsiento(a)}>Duplicar</button>
+                        {canCorregir(a) && (
+                          <button className="text-amber-600 hover:text-amber-900 mr-3" onClick={()=>setOpenCorregir(a)}>Corregir</button>
+                        )}
+                        {a.estado !== "anulado" && (
+                          <button className="text-red-600 hover:text-red-900" onClick={()=>setOpenAnular(a)}>Anular</button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1022,6 +1077,22 @@ export default function Contabilidad() {
                 ))}
               </tbody>
             </table>
+            <div className="mt-4 flex justify-end gap-2">
+              {canCorregir(openDet) && (
+                <button
+                  className="px-4 py-2 rounded bg-amber-600 text-white hover:bg-amber-700 text-sm"
+                  onClick={() => { setOpenDet(null); setOpenCorregir(openDet); }}
+                >
+                  Corregir
+                </button>
+              )}
+              <button
+                className="px-4 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 text-sm"
+                onClick={() => { setOpenDet(null); duplicateAsiento(openDet); }}
+              >
+                Duplicar este asiento
+              </button>
+            </div>
           </div>
         ) : null}
       </Modal>
@@ -1072,6 +1143,45 @@ export default function Contabilidad() {
           {anularM.isError && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
               {anularM.error?.response?.data?.detail || "No se pudo anular"}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* ====== MODAL: Corrección Rápida ====== */}
+      <Modal
+        open={!!openCorregir}
+        onClose={()=>setOpenCorregir(null)}
+        title={`Corregir asiento #${openCorregir?.id}`}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button className="px-3 py-2 rounded border" onClick={()=>setOpenCorregir(null)}>Cancelar</button>
+            <button
+              className="px-3 py-2 rounded bg-amber-600 text-white disabled:opacity-60"
+              disabled={anularM.isPending}
+              onClick={onCorregirConfirm}>
+              {anularM.isPending ? "Procesando…" : "Anular y corregir"}
+            </button>
+          </div>
+        }
+      >
+        <div className="grid gap-3">
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm">
+            <p className="font-medium text-amber-800 mb-1">¿Cómo funciona?</p>
+            <p className="text-amber-700">
+              Se anulará el asiento #{openCorregir?.id} y se abrirá un formulario
+              con los mismos datos para que hagás las correcciones necesarias.
+              La pista de auditoría queda intacta.
+            </p>
+          </div>
+          <div className="text-sm text-gray-600">
+            <p><strong>Concepto:</strong> {openCorregir?.concepto}</p>
+            <p><strong>Tercero:</strong> {openCorregir?.tercero_nombre}</p>
+            <p><strong>Movimientos:</strong> {openCorregir?.movimientos?.length || 0} líneas</p>
+          </div>
+          {anularM.isError && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {anularM.error?.response?.data?.detail || "No se pudo corregir"}
             </div>
           )}
         </div>

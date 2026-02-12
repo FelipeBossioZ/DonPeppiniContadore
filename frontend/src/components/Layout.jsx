@@ -20,6 +20,7 @@ import {
   UserMinus,
   Gift,
   Upload,
+  Shield,
 } from 'lucide-react';
 import { authService } from '../services/auth';
 import EmpresaSelector from './EmpresaSelector';
@@ -56,6 +57,7 @@ const Layout = () => {
     { name: 'Notas EEFF', href: '/notas-eeff', icon: BookOpen },
     { name: 'Indicadores', href: '/indicadores', icon: TrendingUp },
     { name: 'Cierre Contable', href: '/cierre-contable', icon: Lock },
+    { name: 'Auditoría Interna', href: '/auditoria', icon: Shield },
   ];
 
   const isActive = (path) => location.pathname === path;

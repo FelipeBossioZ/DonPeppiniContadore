@@ -621,3 +621,47 @@ class ConceptoRetencion(models.Model):
 
     def __str__(self):
         return f"{self.concepto_pago} ({self.tarifa}%)"
+
+class BitacoraAuditoria(models.Model):
+    """Registro automático de acciones contables para auditoría interna."""
+    ACCIONES = [
+        ('crear_asiento', 'Crear asiento'),
+        ('anular_asiento', 'Anular asiento'),
+        ('corregir_asiento', 'Corrección rápida'),
+        ('crear_tercero', 'Crear tercero'),
+        ('editar_tercero', 'Editar tercero'),
+        ('cierre_mensual', 'Cierre mensual'),
+        ('cierre_anual', 'Cierre anual'),
+        ('reapertura', 'Reapertura de período'),
+        ('importar_asientos', 'Importar asientos'),
+        ('otro', 'Otro'),
+    ]
+
+    empresa = models.ForeignKey(
+        'empresas.Empresa', on_delete=models.CASCADE,
+        related_name='bitacora_auditoria'
+    )
+    usuario = models.ForeignKey(
+        'auth.User', on_delete=models.SET_NULL, null=True, blank=True
+    )
+    accion = models.CharField(max_length=30, choices=ACCIONES)
+    detalle = models.TextField(blank=True)
+    asiento = models.ForeignKey(
+        AsientoContable, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='bitacora'
+    )
+    asiento_relacionado = models.ForeignKey(
+        AsientoContable, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='bitacora_relacionada',
+        help_text="Asiento de ajuste o corrección vinculado"
+    )
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    fecha = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-fecha']
+        verbose_name = "Registro de Auditoría"
+        verbose_name_plural = "Registros de Auditoría"
+
+    def __str__(self):
+        return f"[{self.fecha:%Y-%m-%d %H:%M}] {self.get_accion_display()} - {self.usuario}"
