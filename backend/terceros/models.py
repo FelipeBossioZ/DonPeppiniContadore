@@ -60,6 +60,29 @@ class Tercero(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        # Auto-calcular dígito de verificación
+        if self.numero_documento:
+            self.digito_verificacion = self._calcular_dv(self.numero_documento)
+        super().save(*args, **kwargs)
+
+    @staticmethod
+    def _calcular_dv(nit):
+        """Algoritmo Módulo 11 DIAN Colombia"""
+        import re
+        s = re.sub(r'\D', '', str(nit))
+        if not s:
+            return ''
+        primos = [71, 67, 59, 53, 47, 43, 41, 37, 29, 23, 19, 17, 13, 7, 3]
+        padded = s.zfill(15)
+        suma = sum(int(padded[i]) * primos[i] for i in range(15))
+        residuo = suma % 11
+        if residuo == 0:
+            return '0'
+        if residuo == 1:
+            return '1'
+        return str(11 - residuo)
+
     def __str__(self):
         return f"{self.nombre_razon_social} ({self.tipo_documento} {self.numero_documento})"
 

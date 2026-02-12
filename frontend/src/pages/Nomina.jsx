@@ -41,6 +41,19 @@ const Badge = ({ color, children }) => {
 // ============================================================
 // MODAL EMPLEADO
 // ============================================================
+// ── Field reutilizable (FUERA de cualquier componente para mantener referencia estable) ──
+function ModalField({ label, type = "text", value, onChange, children, className, ...props }) {
+  return (
+    <div className={className}>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      {children || (
+        <input type={type} value={value} onChange={onChange}
+          className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none" {...props} />
+      )}
+    </div>
+  );
+}
+
 function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpdate }) {
   const isEdit = !!empleado;
   const [form, setForm] = useState({
@@ -94,15 +107,8 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
     }
   };
 
-  const Field = ({ label, name, type = "text", children, ...props }) => (
-    <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-      {children || (
-        <input type={type} value={form[name]} onChange={e => setForm(f => ({ ...f, [name]: e.target.value }))}
-          className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none" {...props} />
-      )}
-    </div>
-  );
+  const ch = (name) => (e) => setForm(f => ({ ...f, [name]: e.target.value }));
+  const chk = (name) => (e) => setForm(f => ({ ...f, [name]: e.target.checked }));
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -112,50 +118,48 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded"><X size={20} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <Field label="Tercero *" name="tercero">
-            <select value={form.tercero} onChange={e => setForm(f => ({ ...f, tercero: e.target.value }))}
+          <ModalField label="Tercero *">
+            <select value={form.tercero} onChange={ch("tercero")}
               required disabled={isEdit}
               className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
               <option value="">-- Seleccionar --</option>
               {terceros?.map(t => <option key={t.id} value={t.id}>{t.nombre} ({t.numero_documento})</option>)}
             </select>
-          </Field>
+          </ModalField>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Cargo" name="cargo" placeholder="Ej: Auxiliar contable" />
-            <Field label="Tipo contrato" name="tipo_contrato">
-              <select value={form.tipo_contrato} onChange={e => setForm(f => ({ ...f, tipo_contrato: e.target.value }))}
+            <ModalField label="Cargo" value={form.cargo} onChange={ch("cargo")} placeholder="Ej: Auxiliar contable" />
+            <ModalField label="Tipo contrato">
+              <select value={form.tipo_contrato} onChange={ch("tipo_contrato")}
                 className="w-full border rounded-lg px-3 py-2 text-sm">
                 <option value="IND">Indefinido</option>
                 <option value="FIJ">Fijo</option>
                 <option value="OBR">Obra o labor</option>
                 <option value="PRE">Prestación de servicios</option>
               </select>
-            </Field>
+            </ModalField>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Fecha ingreso *" name="fecha_ingreso" type="date" required />
-            <Field label="Salario base mensual *" name="salario_base" type="number" required min="0" placeholder="1750905" />
+            <ModalField label="Fecha ingreso *" type="date" value={form.fecha_ingreso} onChange={ch("fecha_ingreso")} required />
+            <ModalField label="Salario base mensual *" type="number" value={form.salario_base} onChange={ch("salario_base")} required min="0" placeholder="1750905" />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Nivel ARL" name="nivel_arl">
-              <select value={form.nivel_arl} onChange={e => setForm(f => ({ ...f, nivel_arl: e.target.value }))}
+            <ModalField label="Nivel ARL">
+              <select value={form.nivel_arl} onChange={ch("nivel_arl")}
                 className="w-full border rounded-lg px-3 py-2 text-sm">
                 {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>Nivel {n}</option>)}
               </select>
-            </Field>
+            </ModalField>
             <div className="flex items-end pb-2 gap-6">
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={form.salario_integral}
-                  onChange={e => setForm(f => ({ ...f, salario_integral: e.target.checked }))}
+                <input type="checkbox" checked={form.salario_integral} onChange={chk("salario_integral")}
                   className="rounded border-gray-300" />
                 Salario integral
               </label>
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={form.trabajo_remoto}
-                  onChange={e => setForm(f => ({ ...f, trabajo_remoto: e.target.checked }))}
+                <input type="checkbox" checked={form.trabajo_remoto} onChange={chk("trabajo_remoto")}
                   className="rounded border-gray-300" />
                 Trabajo remoto (sin aux. transporte)
               </label>
@@ -163,16 +167,16 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="EPS" name="eps" placeholder="Sura, Nueva EPS..." />
-            <Field label="AFP (Pensiones)" name="afp" placeholder="Porvenir, Protección..." />
+            <ModalField label="EPS" value={form.eps} onChange={ch("eps")} placeholder="Sura, Nueva EPS..." />
+            <ModalField label="AFP (Pensiones)" value={form.afp} onChange={ch("afp")} placeholder="Porvenir, Protección..." />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Caja compensación" name="caja_compensacion" placeholder="Comfama, Comfenalco..." />
-            <Field label="ARL" name="arl_nombre" placeholder="Sura, Positiva..." />
+            <ModalField label="Caja compensación" value={form.caja_compensacion} onChange={ch("caja_compensacion")} placeholder="Comfama, Comfenalco..." />
+            <ModalField label="ARL" value={form.arl_nombre} onChange={ch("arl_nombre")} placeholder="Sura, Positiva..." />
           </div>
 
-          <Field label="Centro de costo" name="centro_costo" placeholder="Ej: Administración" />
+          <ModalField label="Centro de costo" value={form.centro_costo} onChange={ch("centro_costo")} placeholder="Ej: Administración" />
 
           {/* Retención en la fuente */}
           <div className="border-t pt-4 mt-2">
@@ -181,19 +185,18 @@ function EmpleadoModal({ empleado, terceros, empresaId, onClose, onCreate, onUpd
             </h3>
             <div className="flex items-center gap-2 mb-3">
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={form.tiene_dependientes}
-                  onChange={e => setForm(f => ({ ...f, tiene_dependientes: e.target.checked }))}
+                <input type="checkbox" checked={form.tiene_dependientes} onChange={chk("tiene_dependientes")}
                   className="rounded border-gray-300" />
                 Tiene dependientes (10% ingreso, máx 32 UVT)
               </label>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Intereses vivienda / mes" name="deduccion_vivienda" type="number" min="0" placeholder="0" />
-              <Field label="Medicina prepagada / mes" name="deduccion_medicina_prepagada" type="number" min="0" placeholder="0" />
+              <ModalField label="Intereses vivienda / mes" type="number" value={form.deduccion_vivienda} onChange={ch("deduccion_vivienda")} min="0" placeholder="0" />
+              <ModalField label="Medicina prepagada / mes" type="number" value={form.deduccion_medicina_prepagada} onChange={ch("deduccion_medicina_prepagada")} min="0" placeholder="0" />
             </div>
             <div className="grid grid-cols-2 gap-4 mt-3">
-              <Field label="Aporte vol. pensión / mes" name="aportes_voluntarios_pension" type="number" min="0" placeholder="0" />
-              <Field label="Aporte AFC / mes" name="aportes_afc" type="number" min="0" placeholder="0" />
+              <ModalField label="Aporte vol. pensión / mes" type="number" value={form.aportes_voluntarios_pension} onChange={ch("aportes_voluntarios_pension")} min="0" placeholder="0" />
+              <ModalField label="Aporte AFC / mes" type="number" value={form.aportes_afc} onChange={ch("aportes_afc")} min="0" placeholder="0" />
             </div>
             <p className="text-xs text-gray-400 mt-2">Estos valores se usan para depurar la base de retención. Si no aplican, dejar en 0.</p>
           </div>
@@ -393,7 +396,7 @@ function NovedadesModal({ empleados, onClose, onLiquidar }) {
 // ============================================================
 export default function Nomina() {
   const { empresaId } = useEmpresa();
-  const anio = new Date().getFullYear();
+  const [anio, setAnio] = useState(new Date().getFullYear());
 
   // Data
   const { data: empleados = [], isLoading: loadEmp } = useEmpleados(empresaId);
@@ -485,11 +488,20 @@ export default function Nomina() {
             <Briefcase className="text-indigo-600" size={28} />
             Nómina
           </h1>
-          {params && (
-            <p className="text-sm text-gray-500 mt-1">
-              SMLV {anio}: {peso(params.smlv)} • Aux. transporte: {peso(params.auxilio_transporte)}
-            </p>
-          )}
+          <div className="flex items-center gap-3 mt-1">
+            <div className="flex items-center gap-1">
+              <button onClick={() => setAnio(a => a - 1)}
+                className="px-1.5 py-0.5 text-xs bg-gray-200 hover:bg-gray-300 rounded">◀</button>
+              <span className="text-sm font-semibold text-indigo-700 min-w-[3rem] text-center">{anio}</span>
+              <button onClick={() => setAnio(a => a + 1)}
+                className="px-1.5 py-0.5 text-xs bg-gray-200 hover:bg-gray-300 rounded">▶</button>
+            </div>
+            {params && (
+              <p className="text-sm text-gray-500">
+                SMLV: {peso(params.smlv)} • Aux. transporte: {peso(params.auxilio_transporte)}
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex gap-2 mt-3 sm:mt-0">
           <button onClick={() => setTab("nominas")}
@@ -663,10 +675,6 @@ export default function Nomina() {
                               className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs hover:bg-indigo-700 flex items-center gap-1">
                               <Calculator size={14} /> Liquidar
                             </button>
-                            <button onClick={e => { e.stopPropagation(); handleDeleteNomina(nom.id); }}
-                              className="p-1.5 hover:bg-red-50 rounded text-red-500" title="Eliminar">
-                              <Trash2 size={15} />
-                            </button>
                           </>
                         )}
                         {nom.estado === "liquidada" && (
@@ -681,6 +689,10 @@ export default function Nomina() {
                             </button>
                           </>
                         )}
+                        <button onClick={e => { e.stopPropagation(); handleDeleteNomina(nom.id); }}
+                          className="p-1.5 hover:bg-red-50 rounded text-red-500" title="Eliminar">
+                          <Trash2 size={15} />
+                        </button>
                       </div>
                     </div>
 

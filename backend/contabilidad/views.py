@@ -5367,39 +5367,35 @@ class EjecutarCierreView(views.APIView):
         
         # Crear asiento de cierre
         if tipo == 'anual':
-            descripcion = f"Asiento de cierre año {año}"
+            concepto_cierre = f"Cierre anual {año}"
         else:
-            descripcion = f"Asiento de cierre {mes}/{año}"
+            concepto_cierre = f"Cierre mensual {mes}/{año}"
         
-        # Generar número de asiento
-        ultimo = AsientoContable.objects.filter(empresa=empresa).order_by('-numero').first()
-        nuevo_numero = (ultimo.numero + 1) if ultimo else 1
+        # Obtener tercero de la empresa (por NIT)
+        nit_sin_dv = empresa.nit.split('-')[0] if '-' in empresa.nit else empresa.nit
+        tercero_empresa = Tercero.objects.filter(numero_documento=nit_sin_dv).first()
+        if not tercero_empresa:
+            tercero_empresa = Tercero.objects.create(
+                tipo_documento='NIT',
+                numero_documento=nit_sin_dv,
+                nombre_razon_social=empresa.razon_social,
+                tipo_tercero='OTR',
+            )
         
         asiento = AsientoContable.objects.create(
             empresa=empresa,
-            numero=nuevo_numero,
             fecha=fecha_fin,
-            tipo='cierre',
-            descripcion=descripcion,
+            fiscal_year=año,
+            fiscal_period=13,
+            tercero=tercero_empresa,
+            concepto=concepto_cierre,
             estado='vigente'
         )
         
         movimientos_creados = []
         
-        # Obtener cuentas con saldo para saldar
-        cuentas_resultados = MovimientoContable.objects.filter(
-            asiento__empresa=empresa,
-            asiento__fecha__gte=fecha_inicio,
-            asiento__fecha__lte=fecha_fin,
-            asiento__estado='vigente',
-            cuenta__codigo__startswith__in=['4', '5', '6']
-        ).values('cuenta').annotate(
-            total_d=Sum('debito'),
-            total_c=Sum('credito')
-        )
-        
-        # Simplificación: saldar por clase
         # Clase 4 - Ingresos (debitar para saldar)
+        from django.db.models import Q
         cuentas_ingresos = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__fecha__gte=fecha_inicio,
@@ -5516,6 +5512,132 @@ class EjecutarCierreView(views.APIView):
                 'resultado': float(resultado),
                 'tipo_resultado': 'Utilidad' if resultado >= 0 else 'Pérdida'
             }
+        })
+
+
+class TrasladoResultadosView(views.APIView):
+    """
+    Traslada utilidad/pérdida del ejercicio a utilidades/pérdidas acumuladas.
+    3605 (Utilidad del ejercicio) → 3705 (Utilidades acumuladas)
+    3610 (Pérdida del ejercicio) → 3710 (Pérdidas acumuladas)
+    POST /api/contabilidad/cierres/trasladar-resultados/
+    Body: { empresa, año }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        empresa_id = request.data.get('empresa')
+        año = int(request.data.get('año', datetime.now().year - 1))
+
+        if not empresa_id:
+            return Response({'error': 'Empresa requerida'}, status=400)
+
+        try:
+            empresa = Empresa.objects.get(id=empresa_id)
+        except Empresa.DoesNotExist:
+            return Response({'error': 'Empresa no encontrada'}, status=404)
+
+        # Verificar que exista cierre anual del año
+        cierre = CierreContable.objects.filter(
+            empresa=empresa, tipo='anual', año=año, estado='cerrado'
+        ).first()
+        if not cierre:
+            return Response({'error': f'No existe cierre anual cerrado para {año}'}, status=400)
+
+        # Tercero de la empresa
+        nit_sin_dv = empresa.nit.split('-')[0] if '-' in empresa.nit else empresa.nit
+        tercero_empresa = Tercero.objects.filter(numero_documento=nit_sin_dv).first()
+        if not tercero_empresa:
+            tercero_empresa = Tercero.objects.create(
+                tipo_documento='NIT', numero_documento=nit_sin_dv,
+                nombre_razon_social=empresa.razon_social, tipo_tercero='OTR',
+            )
+
+        movimientos = []
+
+        # Verificar saldo en 3605 (Utilidad del ejercicio)
+        for cod_origen, cod_destino, nombre_destino in [
+            ('3605', '3705', 'Utilidades acumuladas de ejercicios anteriores'),
+            ('3610', '3710', 'Pérdidas acumuladas de ejercicios anteriores'),
+        ]:
+            saldo_q = MovimientoContable.objects.filter(
+                asiento__empresa=empresa,
+                asiento__estado='vigente',
+                cuenta__codigo=cod_origen
+            ).aggregate(
+                d=Coalesce(Sum('debito'), Decimal('0')),
+                c=Coalesce(Sum('credito'), Decimal('0'))
+            )
+            saldo = saldo_q['c'] - saldo_q['d']  # Naturaleza crédito para patrimonio
+
+            if abs(saldo) > 0:
+                # Crear cuentas si no existen
+                cuenta_origen = Cuenta.objects.filter(empresa=empresa, codigo=cod_origen).first()
+                cuenta_destino, _ = Cuenta.objects.get_or_create(
+                    empresa=empresa, codigo=cod_destino,
+                    defaults={'nombre': nombre_destino, 'tipo': 'detalle', 'naturaleza': 'C'}
+                )
+                if cuenta_origen:
+                    movimientos.append({
+                        'origen': cuenta_origen,
+                        'destino': cuenta_destino,
+                        'saldo': saldo,
+                    })
+
+        if not movimientos:
+            return Response({'error': 'No hay saldos en cuentas 3605/3610 para trasladar'}, status=400)
+
+        # Crear asiento de traslado al 1 de enero del año siguiente
+        fecha_traslado = date(año + 1, 1, 1)
+        asiento = AsientoContable.objects.create(
+            empresa=empresa,
+            fecha=fecha_traslado,
+            fiscal_year=año + 1,
+            fiscal_period=1,
+            tercero=tercero_empresa,
+            concepto=f"Traslado resultado ejercicio {año} a utilidades acumuladas",
+            estado='vigente'
+        )
+
+        detalles = []
+        for m in movimientos:
+            saldo = m['saldo']
+            # Si saldo > 0: la cuenta origen tiene saldo crédito → debitar origen, acreditar destino
+            # Si saldo < 0: la cuenta origen tiene saldo débito → acreditar origen, debitar destino
+            if saldo > 0:
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=m['origen'],
+                    descripcion=f"Traslado {m['origen'].codigo} → {m['destino'].codigo}",
+                    debito=saldo, credito=Decimal('0')
+                )
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=m['destino'],
+                    descripcion=f"Traslado resultado {año}",
+                    debito=Decimal('0'), credito=saldo
+                )
+            else:
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=m['origen'],
+                    descripcion=f"Traslado {m['origen'].codigo} → {m['destino'].codigo}",
+                    debito=Decimal('0'), credito=abs(saldo)
+                )
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=m['destino'],
+                    descripcion=f"Traslado resultado {año}",
+                    debito=abs(saldo), credito=Decimal('0')
+                )
+            detalles.append({
+                'origen': m['origen'].codigo,
+                'destino': m['destino'].codigo,
+                'valor': float(saldo),
+            })
+
+        return Response({
+            'success': True,
+            'mensaje': f'Traslado de resultados {año} ejecutado correctamente',
+            'asiento_id': asiento.id,
+            'asiento_numero': asiento.numero,
+            'detalles': detalles,
         })
 
 

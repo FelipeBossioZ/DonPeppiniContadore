@@ -45,6 +45,7 @@ from .views import (
     VerificarPeriodoView,
     PreviewCierreView,
     EjecutarCierreView,
+    TrasladoResultadosView,
     ReabrirPeriodoView,
 )
 
@@ -104,5 +105,6 @@ urlpatterns = [
     path('cierres/verificar/', VerificarPeriodoView.as_view()),
     path('cierres/preview/', PreviewCierreView.as_view()),
     path('cierres/ejecutar/', EjecutarCierreView.as_view()),
+    path('cierres/trasladar-resultados/', TrasladoResultadosView.as_view()),
     path('cierres/reabrir/', ReabrirPeriodoView.as_view()),
 ]

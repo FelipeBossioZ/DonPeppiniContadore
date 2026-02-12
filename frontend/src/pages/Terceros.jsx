@@ -7,7 +7,7 @@ import {
   useUpdateTercero,
   useDeleteTercero,
 } from "../hooks/useTerceros";
-
+import { calcularDV } from "../utils/calcularDV";
 // Modal reutilizable
 function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
@@ -105,10 +105,11 @@ export default function Terceros() {
 
   useEffect(() => {
     if (editing) {
+      const num = editing.numero_documento ?? "";
       setForm({
         tipo_documento: editing.tipo_documento ?? "CC",
-        numero_documento: editing.numero_documento ?? "",
-        digito_verificacion: editing.digito_verificacion ?? "",
+        numero_documento: num,
+        digito_verificacion: num ? calcularDV(num) : (editing.digito_verificacion ?? ""),
         nombre_razon_social: editing.nombre_razon_social ?? "",
         primer_nombre: editing.primer_nombre ?? "",
         otros_nombres: editing.otros_nombres ?? "",
@@ -141,7 +142,18 @@ export default function Terceros() {
   const onNew = () => { setEditing(null); setOpenForm(true); };
   const onEdit = (t) => { setEditing(t); setOpenForm(true); };
   const onDelete = (t) => setConfirmDel(t);
-  const change = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
+  const change = (k) => (e) => {
+    const val = e.target.value;
+    setForm((s) => {
+      const next = { ...s, [k]: val };
+      // Auto-calcular DV cuando cambia número de documento o tipo de documento
+      if (k === "numero_documento" || k === "tipo_documento") {
+        const num = k === "numero_documento" ? val : s.numero_documento;
+        next.digito_verificacion = num ? calcularDV(num) : "";
+      }
+      return next;
+    });
+  };
 
   const isPersonaNatural = form.tipo_documento !== "NIT";
 
@@ -285,12 +297,10 @@ export default function Terceros() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Número documento *</label>
                 <input className="border rounded-lg px-3 py-2 w-full text-sm" value={form.numero_documento} onChange={change("numero_documento")} required />
               </div>
-              {form.tipo_documento === "NIT" && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">DV</label>
-                  <input className="border rounded-lg px-3 py-2 w-full text-sm" value={form.digito_verificacion} onChange={change("digito_verificacion")} maxLength={1} placeholder="0" />
-                </div>
-              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">DV</label>
+                <input className="border rounded-lg px-3 py-2 w-full text-sm bg-gray-50 font-mono text-center" value={form.digito_verificacion} readOnly tabIndex={-1} placeholder="—" />
+              </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Tipo tercero</label>
                 <select className="border rounded-lg px-3 py-2 w-full text-sm" value={form.tipo_tercero} onChange={change("tipo_tercero")}>

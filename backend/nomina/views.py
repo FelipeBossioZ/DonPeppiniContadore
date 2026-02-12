@@ -80,6 +80,15 @@ class NominaViewSet(viewsets.ModelViewSet):
         emp = self.request.data.get('empresa')
         serializer.save(empresa_id=emp)
 
+    def perform_destroy(self, instance):
+        """Allow delete in any state. Clean up associated asiento contable."""
+        if instance.asiento_contable:
+            asiento = instance.asiento_contable
+            instance.asiento_contable = None
+            instance.save(update_fields=['asiento_contable'])
+            asiento.delete()
+        instance.delete()
+
     @action(detail=True, methods=['post'])
     def liquidar(self, request, pk=None):
         """
@@ -292,9 +301,12 @@ class LiquidacionContratoViewSet(viewsets.ModelViewSet):
         self._calcular(liq)
 
     def perform_destroy(self, instance):
-        if instance.estado != 'borrador':
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError("Solo se puede eliminar en estado borrador")
+        """Allow delete in any state. Clean up associated asiento contable."""
+        if instance.asiento_contable:
+            asiento = instance.asiento_contable
+            instance.asiento_contable = None
+            instance.save(update_fields=['asiento_contable'])
+            asiento.delete()
         instance.delete()
 
     def _calcular(self, liq):
