@@ -4720,7 +4720,8 @@ class DashboardDataView(views.APIView):
         resultados_mes_ant = self._obtener_resultados_periodo(empresa, inicio_mes_ant, fin_mes_ant)
         
         # ========== INDICADORES CLAVE ==========
-        indicadores = self._calcular_indicadores_clave(empresa, hoy, inicio_año)
+        resultados_año = self._obtener_resultados_periodo(empresa, inicio_año, hoy)
+        indicadores = self._calcular_indicadores_clave(saldos, resultados_año)
         
         # ========== TENDENCIA 6 MESES ==========
         tendencia = self._obtener_tendencia_ingresos(empresa, 6)
@@ -4766,29 +4767,51 @@ class DashboardDataView(views.APIView):
         })
     
     def _obtener_saldos_principales(self, empresa, fecha_corte):
-        """Obtiene saldos de las cuentas principales"""
+        """Obtiene saldos de las cuentas principales en UNA sola query"""
+        from django.db.models.functions import Left
         
-        def saldo(prefijo, naturaleza='D'):
-            movs = MovimientoContable.objects.filter(
-                asiento__empresa=empresa,
-                asiento__fecha__lte=fecha_corte,
-                asiento__estado='vigente',
-                cuenta__codigo__startswith=prefijo
-            ).aggregate(
-                d=Coalesce(Sum('debito'), Decimal('0')),
-                c=Coalesce(Sum('credito'), Decimal('0'))
-            )
-            return movs['d'] - movs['c'] if naturaleza == 'D' else movs['c'] - movs['d']
+        # Una sola query: agrupar por los primeros 2 dígitos del código de cuenta
+        raw = MovimientoContable.objects.filter(
+            asiento__empresa=empresa,
+            asiento__fecha__lte=fecha_corte,
+            asiento__estado='vigente',
+        ).annotate(
+            prefijo2=Left('cuenta__codigo', 2)
+        ).values('prefijo2').annotate(
+            d=Coalesce(Sum('debito'), Decimal('0')),
+            c=Coalesce(Sum('credito'), Decimal('0')),
+        )
+        
+        # Mapear prefijos a saldos
+        p = {}
+        for r in raw:
+            p[r['prefijo2']] = {'d': r['d'], 'c': r['c']}
+        
+        def saldo_d(prefijo):  # naturaleza débito
+            x = p.get(prefijo, {'d': Decimal('0'), 'c': Decimal('0')})
+            return x['d'] - x['c']
+        
+        def saldo_c(prefijo):  # naturaleza crédito
+            x = p.get(prefijo, {'d': Decimal('0'), 'c': Decimal('0')})
+            return x['c'] - x['d']
+        
+        activo_corriente = saldo_d('11') + saldo_d('12') + saldo_d('13') + saldo_d('14')
+        pasivo_corriente = saldo_c('21') + saldo_c('22') + saldo_c('23') + saldo_c('24') + saldo_c('25')
+        
+        # Para totales clase 1, 2, 3 sumar todos los prefijos que empiecen con esa clase
+        activo_total = sum(saldo_d(k) for k in p if k.startswith('1'))
+        pasivo_total = sum(saldo_c(k) for k in p if k.startswith('2'))
+        patrimonio = sum(saldo_c(k) for k in p if k.startswith('3'))
         
         return {
-            'efectivo': saldo('11'),
-            'cuentas_cobrar': saldo('13'),
-            'cuentas_pagar': saldo('22', 'C') + saldo('23', 'C'),
-            'patrimonio': saldo('3', 'C'),
-            'activo_corriente': saldo('11') + saldo('12') + saldo('13') + saldo('14'),
-            'pasivo_corriente': saldo('21', 'C') + saldo('22', 'C') + saldo('23', 'C') + saldo('24', 'C') + saldo('25', 'C'),
-            'activo_total': saldo('1'),
-            'pasivo_total': saldo('2', 'C'),
+            'efectivo': saldo_d('11'),
+            'cuentas_cobrar': saldo_d('13'),
+            'cuentas_pagar': saldo_c('22') + saldo_c('23'),
+            'patrimonio': patrimonio,
+            'activo_corriente': activo_corriente,
+            'pasivo_corriente': pasivo_corriente,
+            'activo_total': activo_total,
+            'pasivo_total': pasivo_total,
         }
     
     def _obtener_resultados_periodo(self, empresa, fecha_inicio, fecha_fin):
@@ -4818,9 +4841,8 @@ class DashboardDataView(views.APIView):
             'utilidad': ingresos - costos - gastos,
         }
     
-    def _calcular_indicadores_clave(self, empresa, fecha_corte, fecha_inicio_año):
-        """Calcula los 4 indicadores clave para el dashboard"""
-        saldos = self._obtener_saldos_principales(empresa, fecha_corte)
+    def _calcular_indicadores_clave(self, saldos, resultados_año):
+        """Calcula los 4 indicadores clave reutilizando datos ya obtenidos"""
         
         # Razón corriente
         if saldos['pasivo_corriente'] > 0:
@@ -4834,8 +4856,7 @@ class DashboardDataView(views.APIView):
         else:
             endeudamiento = 0
         
-        # ROE (necesita utilidad del año)
-        resultados_año = self._obtener_resultados_periodo(empresa, fecha_inicio_año, fecha_corte)
+        # ROE
         if saldos['patrimonio'] > 0:
             roe = float(resultados_año['utilidad'] / saldos['patrimonio'] * 100)
         else:
@@ -4871,132 +4892,124 @@ class DashboardDataView(views.APIView):
         }
     
     def _obtener_tendencia_ingresos(self, empresa, meses):
-        """Obtiene ingresos de los últimos N meses"""
+        """Obtiene ingresos de los últimos N meses en UNA sola query"""
+        from django.db.models.functions import TruncMonth
         import calendar
         
         hoy = date.today()
-        tendencia = []
-        
         meses_nombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 
                          'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
         
+        # Calcular fecha inicio del rango
+        año_ini = hoy.year
+        mes_ini = hoy.month - (meses - 1)
+        while mes_ini <= 0:
+            mes_ini += 12
+            año_ini -= 1
+        fecha_inicio = date(año_ini, mes_ini, 1)
+        
+        # Una sola query agrupada por mes
+        raw = MovimientoContable.objects.filter(
+            asiento__empresa=empresa,
+            asiento__fecha__gte=fecha_inicio,
+            asiento__fecha__lte=hoy,
+            asiento__estado='vigente',
+            cuenta__codigo__startswith='41'
+        ).annotate(
+            mes_trunc=TruncMonth('asiento__fecha')
+        ).values('mes_trunc').annotate(
+            total=Coalesce(Sum('credito'), Decimal('0')) - Coalesce(Sum('debito'), Decimal('0'))
+        ).order_by('mes_trunc')
+        
+        # Mapear resultados
+        datos_mes = {r['mes_trunc'].date(): float(r['total']) for r in raw}
+        
+        tendencia = []
         for i in range(meses - 1, -1, -1):
-            # Calcular mes
             año = hoy.year
             mes = hoy.month - i
             while mes <= 0:
                 mes += 12
                 año -= 1
-            
-            inicio = date(año, mes, 1)
-            fin = date(año, mes, calendar.monthrange(año, mes)[1])
-            
-            # Obtener ingresos del mes
-            ingresos = MovimientoContable.objects.filter(
-                asiento__empresa=empresa,
-                asiento__fecha__gte=inicio,
-                asiento__fecha__lte=fin,
-                asiento__estado='vigente',
-                cuenta__codigo__startswith='41'
-            ).aggregate(
-                total=Coalesce(Sum('credito'), Decimal('0')) - Coalesce(Sum('debito'), Decimal('0'))
-            )['total']
-            
+            key = date(año, mes, 1)
             tendencia.append({
                 'mes': meses_nombres[mes - 1],
-                'valor': float(ingresos),
+                'valor': datos_mes.get(key, 0),
             })
         
         return tendencia
     
     def _obtener_top_cartera(self, empresa, limite):
-        """Obtiene los principales deudores"""
-        from django.db.models import F
+        """Obtiene los principales deudores en UNA sola query"""
+        from django.db.models import Max
         
-        # Agrupar por tercero en cuentas por cobrar (13xx)
         cartera = MovimientoContable.objects.filter(
             asiento__empresa=empresa,
             asiento__estado='vigente',
-            cuenta__codigo__startswith='13'
+            cuenta__codigo__startswith='13',
+            asiento__tercero__isnull=False
         ).values(
             'asiento__tercero__nombre_razon_social',  
-            'asiento__tercero__id' 
         ).annotate(
-            saldo=Sum('debito') - Sum('credito')
+            saldo=Sum('debito') - Sum('credito'),
+            ultima_fecha=Max('asiento__fecha')
         ).filter(
             saldo__gt=0,
-            asiento__tercero__isnull=False
         ).order_by('-saldo')[:limite]
         
-        resultado = []
-        for item in cartera:
-            # Calcular días de antigüedad (simplificado)
-            ultimo_mov = MovimientoContable.objects.filter(
-                asiento__empresa=empresa,
-                asiento__tercero_id=item['asiento__tercero__id'],  # ← Corregido
-                cuenta__codigo__startswith='13',
-                debito__gt=0
-            ).order_by('-asiento__fecha').first()
-            
-            dias = 0
-            if ultimo_mov:
-                dias = (date.today() - ultimo_mov.asiento.fecha).days
-            
-            resultado.append({
-                'cliente': item['asiento__tercero__nombre_razon_social'] or 'Sin tercero',  # ← Corregido
-                'valor': float(item['saldo']),
-                'dias': dias,
-            })
-        
-        return resultado
+        hoy = date.today()
+        return [{
+            'cliente': item['asiento__tercero__nombre_razon_social'] or 'Sin tercero',
+            'valor': float(item['saldo']),
+            'dias': (hoy - item['ultima_fecha']).days if item['ultima_fecha'] else 0,
+        } for item in cartera]
     
     def _obtener_ultimos_movimientos(self, empresa, limite):
-        """Obtiene los últimos movimientos significativos"""
-        from django.db.models import Q
+        """Obtiene los últimos movimientos significativos con select_related"""
         
-        # Últimos asientos
+        # Obtener los últimos asientos con su movimiento de mayor valor en una sola query
         asientos = AsientoContable.objects.filter(
             empresa=empresa,
             estado='vigente'
-        ).order_by('-fecha', '-id')[:limite]
+        ).prefetch_related('movimientos__cuenta').order_by('-fecha', '-id')[:limite]
         
+        hoy = date.today()
         movimientos = []
         for asiento in asientos:
-            # Obtener el movimiento principal (mayor valor)
-            mov = MovimientoContable.objects.filter(
-                asiento=asiento
-            ).order_by('-debito', '-credito').first()
+            # Obtener movimiento principal del prefetch (sin query extra)
+            movs = list(asiento.movimientos.all())
+            if not movs:
+                continue
+            mov = max(movs, key=lambda m: max(m.debito or 0, m.credito or 0))
             
-            if mov:
-                es_ingreso = mov.cuenta.codigo.startswith('1') and mov.debito > 0
-                valor = float(mov.debito) if mov.debito > 0 else float(mov.credito)
-                
-                # Determinar tipo basado en la cuenta
-                if mov.cuenta.codigo.startswith('4'):
-                    tipo = 'ingreso'
-                elif mov.cuenta.codigo.startswith(('5', '6')):
-                    tipo = 'egreso'
-                elif mov.cuenta.codigo.startswith('11') and mov.debito > 0:
-                    tipo = 'ingreso'
-                elif mov.cuenta.codigo.startswith('11') and mov.credito > 0:
-                    tipo = 'egreso'
-                else:
-                    tipo = 'ingreso' if mov.debito > 0 else 'egreso'
-                
-                # Formato de fecha
-                if asiento.fecha == date.today():
-                    fecha_str = 'Hoy'
-                elif asiento.fecha == date.today() - timedelta(days=1):
-                    fecha_str = 'Ayer'
-                else:
-                    fecha_str = asiento.fecha.strftime('%d/%m')
-                
-                movimientos.append({
-                    'fecha': fecha_str,
-                    'concepto': asiento.descripcion[:40] + '...' if len(asiento.descripcion) > 40 else asiento.descripcion,
-                    'valor': valor,
-                    'tipo': tipo,
-                })
+            valor = float(mov.debito) if mov.debito > 0 else float(mov.credito)
+            codigo = mov.cuenta.codigo
+            
+            if codigo.startswith('4'):
+                tipo = 'ingreso'
+            elif codigo.startswith(('5', '6')):
+                tipo = 'egreso'
+            elif codigo.startswith('11') and mov.debito > 0:
+                tipo = 'ingreso'
+            elif codigo.startswith('11') and mov.credito > 0:
+                tipo = 'egreso'
+            else:
+                tipo = 'ingreso' if mov.debito > 0 else 'egreso'
+            
+            if asiento.fecha == hoy:
+                fecha_str = 'Hoy'
+            elif asiento.fecha == hoy - timedelta(days=1):
+                fecha_str = 'Ayer'
+            else:
+                fecha_str = asiento.fecha.strftime('%d/%m')
+            
+            concepto = asiento.concepto or ''
+            movimientos.append({
+                'fecha': fecha_str,
+                'concepto': concepto[:40] + '...' if len(concepto) > 40 else concepto,
+                'valor': valor,
+                'tipo': tipo,
+            })
         
         return movimientos
     

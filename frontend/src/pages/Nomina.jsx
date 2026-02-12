@@ -47,7 +47,7 @@ function ModalField({ label, type = "text", value, onChange, children, className
     <div className={className}>
       <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
       {children || (
-        <input type={type} value={value} onChange={onChange}
+        <input type={type} value={value ?? ""} onChange={onChange}
           className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none" {...props} />
       )}
     </div>
