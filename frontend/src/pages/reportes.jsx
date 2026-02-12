@@ -2,6 +2,7 @@
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { toast } from "../ui/ToastHost";
+import { useEmpresa } from "../context/EmpresaContext";
 import {
   exportBalancePrueba,
   exportLibroDiario,
@@ -14,6 +15,7 @@ function firstDayOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMo
 function lastDayOfMonth(d=new Date()){ return new Date(d.getFullYear(), d.getMonth()+1, 0).toISOString().slice(0,10); }
 
 export default function Reportes() {
+  const { empresaId } = useEmpresa();
   // Filtros
   const [ini, setIni] = useState(firstDayOfMonth());
   const [fin, setFin] = useState(lastDayOfMonth());
@@ -22,7 +24,7 @@ export default function Reportes() {
   const onBalance = async () => {
     if (!ini && !fin) return toast("Selecciona rango de fechas", "error");
     try {
-      await exportBalancePrueba({ inicio: ini, fin });
+      await exportBalancePrueba({ inicio: ini, fin, empresa: empresaId });
       toast("Descarga iniciada");
     } catch (e) {
       console.error(e);
@@ -33,7 +35,7 @@ export default function Reportes() {
   const onLibroDiario = async () => {
     if (!ini && !fin) return toast("Selecciona rango de fechas", "error");
     try {
-      await exportLibroDiario({ inicio: ini, fin });
+      await exportLibroDiario({ inicio: ini, fin, empresa: empresaId });
       toast("Descarga iniciada");
     } catch (e) {
       console.error(e);
@@ -44,7 +46,7 @@ export default function Reportes() {
   const onLibroMayor = async () => {
     if (!cuenta) return toast("Ingresa el código de cuenta", "error");
     try {
-      await exportLibroMayor({ codigo: cuenta, inicio: ini, fin });
+      await exportLibroMayor({ codigo: cuenta, inicio: ini, fin, empresa: empresaId });
       toast("Descarga iniciada");
     } catch (e) {
       console.error(e);

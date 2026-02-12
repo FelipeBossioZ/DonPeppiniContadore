@@ -93,9 +93,12 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Opcionalmente filtra los asientos por un rango de fechas (?fecha_inicio, ?fecha_fin).
+        Filtra asientos por empresa y opcionalmente por rango de fechas.
         """
         qs = super().get_queryset()
+        empresa_id = self.request.query_params.get('empresa')
+        if empresa_id:
+            qs = qs.filter(empresa_id=empresa_id)
         fi = _parse_date(self.request.query_params.get('fecha_inicio'))
         ff = _parse_date(self.request.query_params.get('fecha_fin'))
         if fi:

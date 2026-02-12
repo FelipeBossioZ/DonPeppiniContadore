@@ -106,7 +106,7 @@ export default function Contabilidad() {
   const cuentas = useMemo(() => empresaId ? cuentasAll.filter(c => c.empresa === empresaId || !c.empresa) : cuentasAll, [cuentasAll, empresaId]);
   const cuentaCodes = useMemo(()=> new Set(cuentas.map(c => String(c.codigo))) ,[cuentas]);
   const { data: asientosData = {}, isLoading: lAsientos, isError: eAsientos, error: errAsientos } =
-    useAsientos({ fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined, page });
+    useAsientos({ empresa: empresaId, fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined, page });
 
   const asientos = asientosData.items ?? asientosData ?? [];
   const total    = asientosData.count ?? (Array.isArray(asientosData) ? asientosData.length : 0);
@@ -114,7 +114,7 @@ export default function Contabilidad() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   // mutaciones
-  const create  = useCreateAsiento({ fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined });
+  const create  = useCreateAsiento({ empresa: empresaId, fecha_inicio: fechaInicio || undefined, fecha_fin: fechaFin || undefined });
   const anularM = useAnularAsiento({});
   const { data: terceros = [] } = useTerceros({});
   const createTer = useCreateTercero({});
