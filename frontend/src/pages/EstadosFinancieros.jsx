@@ -245,14 +245,97 @@ export default function EstadosFinancieros() {
 // ============================================================================
 
 function EstadoSituacion({ data }) {
+  // Merge all items with their corriente flag from backend
+  const allActivos = [
+    ...data.activos.corrientes.detalle.map(i => ({ ...i, corriente: true })),
+    ...data.activos.no_corrientes.detalle.map(i => ({ ...i, corriente: false })),
+  ];
+  const allPasivos = [
+    ...data.pasivos.corrientes.detalle.map(i => ({ ...i, corriente: true })),
+    ...data.pasivos.no_corrientes.detalle.map(i => ({ ...i, corriente: false })),
+  ];
+
+  const [activos, setActivos] = useState(allActivos);
+  const [pasivos, setPasivos] = useState(allPasivos);
+
+  // Recalculate when data changes (new fetch)
+  React.useEffect(() => {
+    setActivos([
+      ...data.activos.corrientes.detalle.map(i => ({ ...i, corriente: true })),
+      ...data.activos.no_corrientes.detalle.map(i => ({ ...i, corriente: false })),
+    ]);
+    setPasivos([
+      ...data.pasivos.corrientes.detalle.map(i => ({ ...i, corriente: true })),
+      ...data.pasivos.no_corrientes.detalle.map(i => ({ ...i, corriente: false })),
+    ]);
+  }, [data]);
+
+  const toggleActivo = (codigo) => {
+    setActivos(prev => prev.map(a => a.codigo === codigo ? { ...a, corriente: !a.corriente } : a));
+  };
+  const togglePasivo = (codigo) => {
+    setPasivos(prev => prev.map(p => p.codigo === codigo ? { ...p, corriente: !p.corriente } : p));
+  };
+
+  const actCorr = activos.filter(a => a.corriente);
+  const actNoCorr = activos.filter(a => !a.corriente);
+  const pasCorr = pasivos.filter(p => p.corriente);
+  const pasNoCorr = pasivos.filter(p => !p.corriente);
+
+  const totalActCorr = actCorr.reduce((s, a) => s + a.saldo, 0);
+  const totalActNoCorr = actNoCorr.reduce((s, a) => s + a.saldo, 0);
+  const totalAct = totalActCorr + totalActNoCorr;
+  const totalPasCorr = pasCorr.reduce((s, p) => s + p.saldo, 0);
+  const totalPasNoCorr = pasNoCorr.reduce((s, p) => s + p.saldo, 0);
+  const totalPas = totalPasCorr + totalPasNoCorr;
+  const totalPasPat = totalPas + data.patrimonio.total;
+  const ecuacionOk = Math.abs(totalAct - totalPasPat) < 1;
+
+  const FilaConToggle = ({ item, onToggle }) => (
+    <tr className="border-b border-gray-50 group">
+      <td className="py-1">
+        <span>{item.codigo} - {item.nombre}</span>
+        <button
+          onClick={() => onToggle(item.codigo)}
+          className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1.5 py-0.5 rounded bg-gray-200 hover:bg-indigo-200 text-gray-600 hover:text-indigo-700"
+          title={item.corriente ? 'Mover a No Corriente' : 'Mover a Corriente'}
+        >
+          {item.corriente ? '→ NC' : '→ C'}
+        </button>
+      </td>
+      <td className="py-1 text-right font-mono">{formatMoney(item.saldo)}</td>
+    </tr>
+  );
+
+  const SeccionItems = ({ items, titulo, total, onToggle, emptyMsg }) => (
+    <Seccion titulo={titulo}>
+      <table className="w-full text-sm">
+        <tbody>
+          {items.length === 0 ? (
+            <tr><td className="py-1 text-gray-400 italic">{emptyMsg || 'Sin movimientos'}</td></tr>
+          ) : items.map((item, i) => (
+            <FilaConToggle key={item.codigo} item={item} onToggle={onToggle} />
+          ))}
+          <tr className="font-medium bg-gray-50">
+            <td className="py-2">Total {titulo}</td>
+            <td className="py-2 text-right font-mono">{formatMoney(total)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </Seccion>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header del reporte */}
       <div className="text-center border-b pb-4">
         <h2 className="text-xl font-bold text-gray-900">{data.titulo}</h2>
         <p className="text-sm text-gray-500">{data.norma}</p>
         <p className="text-sm text-gray-600 mt-1">Al {data.fecha_corte}</p>
       </div>
+
+      <p className="text-xs text-gray-400 text-center italic">
+        💡 Pasa el cursor sobre una cuenta para moverla entre Corriente ↔ No Corriente
+      </p>
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* ACTIVOS */}
@@ -260,45 +343,12 @@ function EstadoSituacion({ data }) {
           <h3 className="font-bold text-lg text-gray-900 mb-3 pb-2 border-b-2 border-indigo-600">
             ACTIVOS
           </h3>
-          
-          <Seccion titulo="Activos Corrientes">
-            <table className="w-full text-sm">
-              <tbody>
-                {data.activos.corrientes.detalle.map((item, i) => (
-                  <tr key={i} className="border-b border-gray-50">
-                    <td className="py-1">{item.codigo} - {item.nombre}</td>
-                    <td className="py-1 text-right">{formatMoney(item.saldo)}</td>
-                  </tr>
-                ))}
-                <tr className="font-medium bg-gray-50">
-                  <td className="py-2">Total Activos Corrientes</td>
-                  <td className="py-2 text-right">{formatMoney(data.activos.corrientes.total)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </Seccion>
-
-          <Seccion titulo="Activos No Corrientes">
-            <table className="w-full text-sm">
-              <tbody>
-                {data.activos.no_corrientes.detalle.map((item, i) => (
-                  <tr key={i} className="border-b border-gray-50">
-                    <td className="py-1">{item.codigo} - {item.nombre}</td>
-                    <td className="py-1 text-right">{formatMoney(item.saldo)}</td>
-                  </tr>
-                ))}
-                <tr className="font-medium bg-gray-50">
-                  <td className="py-2">Total Activos No Corrientes</td>
-                  <td className="py-2 text-right">{formatMoney(data.activos.no_corrientes.total)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </Seccion>
-
+          <SeccionItems items={actCorr} titulo="Activos Corrientes" total={totalActCorr} onToggle={toggleActivo} />
+          <SeccionItems items={actNoCorr} titulo="Activos No Corrientes" total={totalActNoCorr} onToggle={toggleActivo} />
           <div className="mt-4 p-3 bg-indigo-50 rounded-lg">
             <div className="flex justify-between font-bold text-indigo-900">
               <span>TOTAL ACTIVOS</span>
-              <span>{formatMoney(data.activos.total)}</span>
+              <span className="font-mono">{formatMoney(totalAct)}</span>
             </div>
           </div>
         </div>
@@ -308,46 +358,12 @@ function EstadoSituacion({ data }) {
           <h3 className="font-bold text-lg text-gray-900 mb-3 pb-2 border-b-2 border-green-600">
             PASIVOS Y PATRIMONIO
           </h3>
+          <SeccionItems items={pasCorr} titulo="Pasivos Corrientes" total={totalPasCorr} onToggle={togglePasivo} />
+          <SeccionItems items={pasNoCorr} titulo="Pasivos No Corrientes" total={totalPasNoCorr} onToggle={togglePasivo} />
           
-          <Seccion titulo="Pasivos Corrientes">
-            <table className="w-full text-sm">
-              <tbody>
-                {data.pasivos.corrientes.detalle.map((item, i) => (
-                  <tr key={i} className="border-b border-gray-50">
-                    <td className="py-1">{item.codigo} - {item.nombre}</td>
-                    <td className="py-1 text-right">{formatMoney(item.saldo)}</td>
-                  </tr>
-                ))}
-                <tr className="font-medium bg-gray-50">
-                  <td className="py-2">Total Pasivos Corrientes</td>
-                  <td className="py-2 text-right">{formatMoney(data.pasivos.corrientes.total)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </Seccion>
-
-          <Seccion titulo="Pasivos No Corrientes">
-            <table className="w-full text-sm">
-              <tbody>
-                {data.pasivos.no_corrientes.detalle.length === 0 ? (
-                  <tr><td className="py-1 text-gray-400 italic">Sin movimientos</td></tr>
-                ) : data.pasivos.no_corrientes.detalle.map((item, i) => (
-                  <tr key={i} className="border-b border-gray-50">
-                    <td className="py-1">{item.codigo} - {item.nombre}</td>
-                    <td className="py-1 text-right">{formatMoney(item.saldo)}</td>
-                  </tr>
-                ))}
-                <tr className="font-medium bg-gray-50">
-                  <td className="py-2">Total Pasivos No Corrientes</td>
-                  <td className="py-2 text-right">{formatMoney(data.pasivos.no_corrientes.total)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </Seccion>
-
           <div className="my-3 p-2 bg-gray-100 rounded flex justify-between font-medium">
             <span>TOTAL PASIVOS</span>
-            <span>{formatMoney(data.pasivos.total)}</span>
+            <span className="font-mono">{formatMoney(totalPas)}</span>
           </div>
 
           <Seccion titulo="Patrimonio">
@@ -356,16 +372,16 @@ function EstadoSituacion({ data }) {
                 {data.patrimonio.detalle.map((item, i) => (
                   <tr key={i} className="border-b border-gray-50">
                     <td className="py-1">{item.codigo} - {item.nombre}</td>
-                    <td className="py-1 text-right">{formatMoney(item.saldo)}</td>
+                    <td className="py-1 text-right font-mono">{formatMoney(item.saldo)}</td>
                   </tr>
                 ))}
                 <tr className="border-b border-gray-50">
                   <td className="py-1 italic">Resultado del Ejercicio</td>
-                  <td className="py-1 text-right">{formatMoney(data.patrimonio.resultado_ejercicio)}</td>
+                  <td className="py-1 text-right font-mono">{formatMoney(data.patrimonio.resultado_ejercicio)}</td>
                 </tr>
                 <tr className="font-medium bg-gray-50">
                   <td className="py-2">Total Patrimonio</td>
-                  <td className="py-2 text-right">{formatMoney(data.patrimonio.total)}</td>
+                  <td className="py-2 text-right font-mono">{formatMoney(data.patrimonio.total)}</td>
                 </tr>
               </tbody>
             </table>
@@ -374,24 +390,23 @@ function EstadoSituacion({ data }) {
           <div className="mt-4 p-3 bg-green-50 rounded-lg">
             <div className="flex justify-between font-bold text-green-900">
               <span>TOTAL PASIVO + PATRIMONIO</span>
-              <span>{formatMoney(data.verificacion.pasivos_patrimonio)}</span>
+              <span className="font-mono">{formatMoney(totalPasPat)}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Verificación ecuación */}
       <div className={`mt-4 p-4 rounded-lg flex items-center gap-3 ${
-        data.verificacion.ecuacion_ok ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
+        ecuacionOk ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
       }`}>
-        {data.verificacion.ecuacion_ok ? (
+        {ecuacionOk ? (
           <CheckCircle className="h-5 w-5" />
         ) : (
           <AlertCircle className="h-5 w-5" />
         )}
         <span className="font-medium">
           Ecuación Contable: Activo = Pasivo + Patrimonio → 
-          {data.verificacion.ecuacion_ok ? ' ✓ Cuadra correctamente' : ' ✗ Hay diferencia'}
+          {ecuacionOk ? ' ✓ Cuadra correctamente' : ' ✗ Hay diferencia'}
         </span>
       </div>
     </div>

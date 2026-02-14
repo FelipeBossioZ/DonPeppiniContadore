@@ -21,7 +21,7 @@ CUENTAS_LIQ = {
     'por_pagar':           ('250505', 'Salarios por pagar'),
     'retencion_fuente':    ('236505', 'Retención fuente - salarios'),
     'aportes_eps':         ('237005', 'Aportes a EPS'),
-    'aportes_pension':     ('237006', 'Aportes a fondos de pensiones'),
+    'aportes_pension':     ('237045', 'Aportes a fondos de pensiones'),
     # Contra-provisiones (Débitos para reversar provisiones acumuladas)
     'cesantias_consolidadas': ('261005', 'Cesantías consolidadas'),
     'int_cesantias_pagar':    ('261505', 'Intereses sobre cesantías'),

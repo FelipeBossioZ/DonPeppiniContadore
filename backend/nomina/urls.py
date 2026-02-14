@@ -8,6 +8,7 @@ from .views import (
     ComprobantePDFView, ComprobanteContratoView,
     VacacionesViewSet, PrimaSemestralViewSet, CesantiasAnualesViewSet,
     DashboardNominaView, ImportarEmpleadosView,
+    PILAPreviewView, PILACausarView, PILAPagarView,
 )
 
 router = DefaultRouter()
@@ -27,4 +28,7 @@ urlpatterns = [
     path('comprobante-contrato/<int:pk>/', ComprobanteContratoView.as_view(), name='comprobante-contrato'),
     path('dashboard/', DashboardNominaView.as_view(), name='dashboard-nomina'),
     path('importar-empleados/', ImportarEmpleadosView.as_view(), name='importar-empleados'),
+    path('pila/preview/', PILAPreviewView.as_view(), name='pila-preview'),
+    path('pila/causar/', PILACausarView.as_view(), name='pila-causar'),
+    path('pila/pagar/', PILAPagarView.as_view(), name='pila-pagar'),
 ]

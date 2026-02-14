@@ -1276,33 +1276,93 @@ class EstadoSituacionFinancieraView(views.APIView):
             return result['debitos'] - result['creditos']
         
         def detalle_clase(clase):
-            """Obtiene detalle por grupos de una clase"""
-            cuentas = Cuenta.objects.filter(
-                empresa=empresa,
-                codigo__startswith=str(clase),
-                codigo__regex=r'^\d{2}$'  # Solo grupos (2 dígitos)
-            ).order_by('codigo')
+            """Obtiene detalle por grupos de una clase - derivado de movimientos reales"""
+            # Obtener todos los movimientos de la clase agrupados por los primeros 2 dígitos
+            from django.db.models.functions import Substr
             
+            grupos = MovimientoContable.objects.filter(
+                asiento__empresa=empresa,
+                asiento__fecha__lte=fecha_corte,
+                asiento__estado='vigente',
+                cuenta__codigo__startswith=str(clase)
+            ).annotate(
+                grupo=Substr('cuenta__codigo', 1, 2)
+            ).values('grupo').annotate(
+                debitos=Coalesce(Sum('debito'), Decimal('0')),
+                creditos=Coalesce(Sum('credito'), Decimal('0'))
+            ).order_by('grupo')
+            
+            # Buscar nombres de los grupos
             detalle = []
-            for cuenta in cuentas:
-                saldo = saldo_cuenta(cuenta.codigo)
-                if saldo != 0:
-                    detalle.append({
-                        'codigo': cuenta.codigo,
-                        'nombre': cuenta.nombre,
-                        'saldo': float(saldo) if clase in [1] else float(saldo) * -1
-                    })
+            for g in grupos:
+                saldo_raw = g['debitos'] - g['creditos']
+                if saldo_raw == 0:
+                    continue
+                
+                # Buscar nombre del grupo en PUC
+                cuenta_grupo = Cuenta.objects.filter(
+                    empresa=empresa,
+                    codigo=g['grupo']
+                ).first()
+                
+                # Si no existe el grupo, buscar la primera cuenta del grupo para inferir nombre
+                if not cuenta_grupo:
+                    primera = Cuenta.objects.filter(
+                        empresa=empresa,
+                        codigo__startswith=g['grupo']
+                    ).first()
+                    nombre_grupo = primera.nombre if primera else f"Grupo {g['grupo']}"
+                    # Limpiar nombre para nivel grupo
+                    NOMBRES_GRUPO = {
+                        '11': 'Disponible', '12': 'Inversiones', '13': 'Deudores',
+                        '14': 'Inventarios', '15': 'Propiedad, planta y equipo',
+                        '16': 'Intangibles', '17': 'Diferidos', '18': 'Otros activos',
+                        '19': 'Valorizaciones',
+                        '21': 'Obligaciones financieras', '22': 'Proveedores',
+                        '23': 'Cuentas por pagar', '24': 'Impuestos',
+                        '25': 'Obligaciones laborales', '26': 'Pasivos estimados',
+                        '27': 'Diferidos', '28': 'Otros pasivos', '29': 'Bonos',
+                        '31': 'Capital social', '32': 'Superávit capital',
+                        '33': 'Reservas', '34': 'Revalorización patrimonio',
+                        '36': 'Resultados del ejercicio', '37': 'Resultados ej. anteriores',
+                        '38': 'Superávit por valorizaciones',
+                    }
+                    nombre_grupo = NOMBRES_GRUPO.get(g['grupo'], nombre_grupo)
+                else:
+                    nombre_grupo = cuenta_grupo.nombre
+                
+                saldo = float(saldo_raw) if clase == 1 else float(saldo_raw) * -1
+                detalle.append({
+                    'codigo': g['grupo'],
+                    'nombre': nombre_grupo,
+                    'saldo': saldo
+                })
             return detalle
         
         # ACTIVOS (Clase 1)
         activos_detalle = detalle_clase(1)
         total_activos = sum((Decimal(str(a['saldo'])) for a in activos_detalle), Decimal('0'))
         
-        # Clasificación corriente/no corriente (simplificada)
+        # Clasificación corriente/no corriente por defecto
+        ACTIVOS_CORRIENTES = {'11', '12', '13', '14'}  # Disponible, Inversiones CP, Deudores, Inventarios
+        PASIVOS_CORRIENTES = {'21', '22', '23', '24', '25'}  # Obl. financieras CP, Proveedores, CxP, Impuestos, Laborales
+        
+        # Permitir override desde query params: ?corrientes=15,17&no_corrientes=12
+        override_corrientes = set(request.query_params.get('act_corrientes', '').split(',')) - {''}
+        override_no_corrientes = set(request.query_params.get('act_no_corrientes', '').split(',')) - {''}
+        
         activos_corrientes = []
         activos_no_corrientes = []
         for a in activos_detalle:
-            if a['codigo'] in ['11', '12', '13', '14']:  # Disponible, Inversiones CP, Deudores, Inventarios
+            cod = a['codigo']
+            if cod in override_corrientes:
+                is_corriente = True
+            elif cod in override_no_corrientes:
+                is_corriente = False
+            else:
+                is_corriente = cod in ACTIVOS_CORRIENTES
+            a['corriente'] = is_corriente
+            if is_corriente:
                 activos_corrientes.append(a)
             else:
                 activos_no_corrientes.append(a)
@@ -1311,11 +1371,21 @@ class EstadoSituacionFinancieraView(views.APIView):
         pasivos_detalle = detalle_clase(2)
         total_pasivos = sum((Decimal(str(p['saldo'])) for p in pasivos_detalle), Decimal('0'))
         
-        # Clasificación corriente/no corriente
+        override_pas_corrientes = set(request.query_params.get('pas_corrientes', '').split(',')) - {''}
+        override_pas_no_corrientes = set(request.query_params.get('pas_no_corrientes', '').split(',')) - {''}
+        
         pasivos_corrientes = []
         pasivos_no_corrientes = []
         for p in pasivos_detalle:
-            if p['codigo'] in ['21', '22', '23', '24', '25']:  # Obligaciones CP, Proveedores, Cuentas por pagar, Impuestos, Obligaciones laborales
+            cod = p['codigo']
+            if cod in override_pas_corrientes:
+                is_corriente = True
+            elif cod in override_pas_no_corrientes:
+                is_corriente = False
+            else:
+                is_corriente = cod in PASIVOS_CORRIENTES
+            p['corriente'] = is_corriente
+            if is_corriente:
                 pasivos_corrientes.append(p)
             else:
                 pasivos_no_corrientes.append(p)
