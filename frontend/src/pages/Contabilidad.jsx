@@ -10,6 +10,7 @@ import { toast } from "../ui/ToastHost";
 import ImportarAsientosModal from '../components/ImportarAsientosModal';
 import { FileSpreadsheet } from 'lucide-react';
 import { useEmpresa } from '../context/EmpresaContext';
+import api from '../services/api';
 
 
 // Modal simple reutilizable
@@ -75,6 +76,41 @@ const TIPOS_COMPROBANTE = [
   { value: "OT", label: "OT - Otros" },
 ];
 
+
+// PlantillaLoader mini-component
+function PlantillaLoader({ empresaId, onLoad }) {
+  const [lista, setLista] = useState(null);
+  const cargar = async () => {
+    try {
+      const res = await api.get('/contabilidad/plantillas/', { params: { empresa: empresaId } });
+      setLista(res.data);
+    } catch(e) { setLista([]); }
+  };
+  return (
+    <div className="flex items-center gap-2 p-2 bg-purple-50 rounded-lg">
+      <span className="text-xs text-purple-600 font-medium whitespace-nowrap">📋 Plantilla:</span>
+      {lista === null ? (
+        <button type="button" onClick={cargar}
+          className="text-xs text-purple-700 bg-purple-100 px-3 py-1 rounded hover:bg-purple-200">
+          Cargar plantillas
+        </button>
+      ) : lista.length === 0 ? (
+        <span className="text-xs text-gray-400">No hay plantillas guardadas</span>
+      ) : (
+        <select className="border rounded px-2 py-1 text-sm flex-1" defaultValue=""
+          onChange={(e) => {
+            const p = lista.find(x => x.id === parseInt(e.target.value));
+            if (p) onLoad(p);
+          }}>
+          <option value="">Seleccionar...</option>
+          {lista.map(p => (
+            <option key={p.id} value={p.id}>{p.nombre} ({p.lineas.length} líneas)</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
 
 export default function Contabilidad() {
   const { empresaId } = useEmpresa();
@@ -666,6 +702,16 @@ export default function Contabilidad() {
       {/* ====== MODAL: Nuevo Asiento ====== */}
       <Modal open={openForm} onClose={() => setOpenForm(false)} title="Nuevo asiento contable" footer={null} wide>
         <form onSubmit={onSubmitAsiento} className="grid grid-cols-1 gap-4">
+          {/* Cargar plantilla */}
+          <PlantillaLoader empresaId={empresaId} onLoad={(p) => {
+            setForm(f => ({ ...f, tipo_comprobante: p.tipo_comprobante, concepto: p.concepto }));
+            setMovRows(p.lineas.map(l => ({
+              cuenta: l.cuenta_codigo,
+              tercero_id: l.tercero_id || '',
+              debito: l.tipo === 'debito' ? l.monto : 0,
+              credito: l.tipo === 'credito' ? l.monto : 0,
+            })));
+          }} />
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {/* Tipo de Comprobante */}
             <div>
@@ -1132,6 +1178,27 @@ export default function Contabilidad() {
                 onClick={() => { setOpenDet(null); duplicateAsiento(openDet); }}
               >
                 Duplicar este asiento
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-purple-600 text-white hover:bg-purple-700 text-sm"
+                onClick={async () => {
+                  const nombre = prompt('Nombre para la plantilla:');
+                  if (!nombre) return;
+                  const dia = prompt('Programar mensual? Día del mes (1-28, vacío = no programar):');
+                  try {
+                    await api.post('/contabilidad/plantillas/crear/', {
+                      empresa: empresaId,
+                      nombre,
+                      desde_asiento_id: openDet.id,
+                      dia_del_mes: dia || undefined,
+                    });
+                    alert('✅ Plantilla creada: ' + nombre);
+                  } catch (err) {
+                    alert('Error: ' + (err.response?.data?.error || err.message));
+                  }
+                }}
+              >
+                Guardar como plantilla
               </button>
             </div>
           </div>

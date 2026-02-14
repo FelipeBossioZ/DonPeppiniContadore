@@ -25,6 +25,8 @@ import LiquidacionContrato from './pages/LiquidacionContrato';
 import PrestacionesSociales from './pages/PrestacionesSociales';
 import ImportDIAN from './pages/ImportDIAN';
 import AuditoriaInterna from './pages/AuditoriaInterna';
+import CxPCxC from './pages/CxPCxC';
+import Plantillas from './pages/Plantillas';
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children }) => {
@@ -65,6 +67,8 @@ function App() {
           <Route path="indicadores" element={<IndicadoresFinancieros />} />
           <Route path="cierre-contable" element={<CierreContable />} />
           <Route path="auditoria" element={<AuditoriaInterna />} />
+          <Route path="cxp-cxc" element={<CxPCxC />} />
+          <Route path="plantillas" element={<Plantillas />} />
 
 
         </Route>

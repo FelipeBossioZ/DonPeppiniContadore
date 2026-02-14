@@ -7326,3 +7326,462 @@ class AuditoriaResumenView(views.APIView):
                 'usuario': b.usuario.username if b.usuario else 'Sistema',
             } for b in ultimas],
         })
+
+
+# ============================================================
+# 🎩 CxP / CxC — Cuentas por Pagar y por Cobrar
+# ============================================================
+
+class CxPCxCPendientesView(views.APIView):
+    """
+    Lista cuentas pendientes de pago (CxP) o cobro (CxC).
+    CxP: cuentas 21xx-28xx con saldo crédito neto > 0
+    CxC: cuentas 13xx con saldo débito neto > 0
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa_id = request.query_params.get('empresa')
+        tipo = request.query_params.get('tipo', 'cxp')  # 'cxp' o 'cxc'
+        
+        if not empresa_id:
+            return Response({'error': 'empresa es requerido'}, status=400)
+
+        # Filtrar movimientos vigentes
+        movs = MovimientoContable.objects.filter(
+            asiento__empresa_id=empresa_id,
+            asiento__estado='vigente'
+        )
+
+        if tipo == 'cxp':
+            # CxP: cuentas 21xx a 28xx
+            movs = movs.filter(
+                cuenta__codigo__regex=r'^2[1-8]'
+            )
+        else:
+            # CxC: cuentas 13xx
+            movs = movs.filter(
+                cuenta__codigo__startswith='13'
+            )
+
+        # Agrupar por cuenta + tercero
+        agrupado = movs.values(
+            'cuenta__codigo', 'cuenta__nombre',
+            'tercero__id', 'tercero__nombre_razon_social', 'tercero__numero_documento'
+        ).annotate(
+            total_debito=Coalesce(Sum('debito'), Decimal('0')),
+            total_credito=Coalesce(Sum('credito'), Decimal('0')),
+        )
+
+        pendientes = []
+        for row in agrupado:
+            db = row['total_debito']
+            cr = row['total_credito']
+
+            if tipo == 'cxp':
+                saldo = cr - db  # Saldo acreedor = pendiente de pagar
+            else:
+                saldo = db - cr  # Saldo deudor = pendiente de cobrar
+
+            if saldo > Decimal('0.50'):  # Ignorar centavos residuales
+                pendientes.append({
+                    'cuenta_codigo': row['cuenta__codigo'],
+                    'cuenta_nombre': row['cuenta__nombre'],
+                    'tercero_id': row['tercero__id'],
+                    'tercero_nombre': row['tercero__nombre_razon_social'] or 'Sin tercero',
+                    'tercero_doc': row['tercero__numero_documento'] or '',
+                    'saldo': float(saldo),
+                    'total_debito': float(db),
+                    'total_credito': float(cr),
+                })
+
+        # Ordenar por saldo descendente
+        pendientes.sort(key=lambda x: x['saldo'], reverse=True)
+
+        total = sum(p['saldo'] for p in pendientes)
+
+        return Response({
+            'tipo': tipo,
+            'pendientes': pendientes,
+            'total': total,
+            'count': len(pendientes),
+        })
+
+
+class PagarCxPView(views.APIView):
+    """
+    Genera asiento de pago para una o varias CxP/CxC.
+    CxP: Db CxP → Cr Banco
+    CxC: Db Banco → Cr CxC
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        empresa_id = request.data.get('empresa')
+        tipo = request.data.get('tipo', 'cxp')
+        fecha = request.data.get('fecha')
+        cuenta_banco = request.data.get('cuenta_banco')
+        items = request.data.get('items', [])
+        concepto = request.data.get('concepto', '')
+
+        if not all([empresa_id, fecha, cuenta_banco, items]):
+            return Response({'error': 'empresa, fecha, cuenta_banco e items son requeridos'}, status=400)
+
+        from datetime import datetime as dt
+        try:
+            fecha_obj = dt.strptime(fecha, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Fecha inválida'}, status=400)
+
+        try:
+            from empresas.models import Empresa
+            empresa = Empresa.objects.get(id=empresa_id)
+        except Empresa.DoesNotExist:
+            return Response({'error': 'Empresa no encontrada'}, status=404)
+
+        try:
+            banco = Cuenta.objects.get(empresa=empresa, codigo=cuenta_banco)
+        except Cuenta.DoesNotExist:
+            return Response({'error': f'Cuenta {cuenta_banco} no encontrada'}, status=404)
+
+        # Validar items
+        from terceros.models import Tercero
+        total = Decimal('0')
+        lineas_data = []
+        nombres_items = []
+
+        for item in items:
+            codigo = item.get('cuenta_codigo')
+            monto = Decimal(str(item.get('monto', 0)))
+            tercero_id = item.get('tercero_id')
+
+            if monto <= 0:
+                continue
+
+            try:
+                cuenta = Cuenta.objects.get(empresa=empresa, codigo=codigo)
+            except Cuenta.DoesNotExist:
+                return Response({'error': f'Cuenta {codigo} no encontrada'}, status=400)
+
+            tercero = None
+            if tercero_id:
+                try:
+                    tercero = Tercero.objects.get(id=tercero_id)
+                except Tercero.DoesNotExist:
+                    pass
+
+            lineas_data.append({
+                'cuenta': cuenta,
+                'monto': monto.quantize(Decimal('0.01')),
+                'tercero': tercero,
+            })
+            total += monto
+            nombre = item.get('tercero_nombre', cuenta.nombre)
+            if nombre not in nombres_items:
+                nombres_items.append(nombre)
+
+        if not lineas_data:
+            return Response({'error': 'No hay items válidos para pagar'}, status=400)
+
+        # Auto-concepto si no se envió
+        if not concepto:
+            resumen = ', '.join(nombres_items[:3])
+            if len(nombres_items) > 3:
+                resumen += f' +{len(nombres_items) - 3} más'
+            concepto = f"{'Pago' if tipo == 'cxp' else 'Cobro'} — {resumen}"
+
+        # Crear asiento
+        tipo_comp = 'CE' if tipo == 'cxp' else 'RC'
+        asiento = AsientoContable.objects.create(
+            empresa=empresa,
+            fecha=fecha_obj,
+            concepto=concepto,
+            tipo_comprobante=tipo_comp,
+            fiscal_year=fecha_obj.year,
+            fiscal_period=fecha_obj.month,
+        )
+
+        for ld in lineas_data:
+            if tipo == 'cxp':
+                # Pago CxP: Db CxP, Cr Banco
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=ld['cuenta'], tercero=ld['tercero'],
+                    debito=ld['monto'], credito=Decimal('0')
+                )
+            else:
+                # Cobro CxC: Db Banco, Cr CxC
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=ld['cuenta'], tercero=ld['tercero'],
+                    debito=Decimal('0'), credito=ld['monto']
+                )
+
+        # Línea de banco (contrapartida)
+        if tipo == 'cxp':
+            MovimientoContable.objects.create(
+                asiento=asiento, cuenta=banco,
+                debito=Decimal('0'), credito=total.quantize(Decimal('0.01'))
+            )
+        else:
+            MovimientoContable.objects.create(
+                asiento=asiento, cuenta=banco,
+                debito=total.quantize(Decimal('0.01')), credito=Decimal('0')
+            )
+
+        return Response({
+            'success': True,
+            'asiento_id': asiento.id,
+            'numero': f"{asiento.tipo_comprobante}-{asiento.numero:04d}",
+            'concepto': concepto,
+            'total': float(total),
+            'lineas': len(lineas_data) + 1,
+        }, status=201)
+
+
+# ============================================================
+# 🎩 PLANTILLAS DE ASIENTO
+# ============================================================
+
+class PlantillasListView(views.APIView):
+    """Lista plantillas de la empresa."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa_id = request.query_params.get('empresa')
+        if not empresa_id:
+            return Response({'error': 'empresa requerida'}, status=400)
+
+        from .models import PlantillaAsiento, PlantillaLinea
+        plantillas = PlantillaAsiento.objects.filter(empresa_id=empresa_id).prefetch_related(
+            'lineas', 'lineas__cuenta', 'lineas__tercero', 'programaciones'
+        )
+
+        result = []
+        for p in plantillas:
+            programacion = p.programaciones.filter(activo=True).first()
+            result.append({
+                'id': p.id,
+                'nombre': p.nombre,
+                'concepto': p.concepto,
+                'tipo_comprobante': p.tipo_comprobante,
+                'notas': p.notas,
+                'lineas': [{
+                    'id': l.id,
+                    'cuenta_codigo': l.cuenta.codigo,
+                    'cuenta_nombre': l.cuenta.nombre,
+                    'tercero_id': l.tercero_id,
+                    'tercero_nombre': l.tercero.nombre_razon_social if l.tercero else None,
+                    'tipo': l.tipo,
+                    'monto': float(l.monto),
+                    'orden': l.orden,
+                } for l in p.lineas.all()],
+                'programado': {
+                    'id': programacion.id,
+                    'dia_del_mes': programacion.dia_del_mes,
+                    'activo': programacion.activo,
+                    'ultimo_generado': str(programacion.ultimo_generado) if programacion.ultimo_generado else None,
+                } if programacion else None,
+            })
+
+        return Response(result)
+
+
+class PlantillaCrearView(views.APIView):
+    """Crear plantilla nueva o desde un asiento existente."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        empresa_id = request.data.get('empresa')
+        nombre = request.data.get('nombre')
+        concepto = request.data.get('concepto', '')
+        tipo_comprobante = request.data.get('tipo_comprobante', 'OT')
+        lineas = request.data.get('lineas', [])
+        desde_asiento_id = request.data.get('desde_asiento_id')
+        # Programación opcional
+        dia_del_mes = request.data.get('dia_del_mes')
+
+        if not empresa_id or not nombre:
+            return Response({'error': 'empresa y nombre son requeridos'}, status=400)
+
+        from .models import PlantillaAsiento, PlantillaLinea, AsientoProgramado
+
+        # Verificar nombre único
+        if PlantillaAsiento.objects.filter(empresa_id=empresa_id, nombre=nombre).exists():
+            return Response({'error': f'Ya existe una plantilla "{nombre}"'}, status=400)
+
+        plantilla = PlantillaAsiento.objects.create(
+            empresa_id=empresa_id,
+            nombre=nombre,
+            concepto=concepto,
+            tipo_comprobante=tipo_comprobante,
+        )
+
+        if desde_asiento_id:
+            # Crear desde asiento existente
+            try:
+                asiento = AsientoContable.objects.get(id=desde_asiento_id)
+                plantilla.concepto = asiento.concepto
+                plantilla.tipo_comprobante = asiento.tipo_comprobante
+                plantilla.save()
+
+                for i, mov in enumerate(asiento.movimientos.all().order_by('id')):
+                    PlantillaLinea.objects.create(
+                        plantilla=plantilla,
+                        cuenta=mov.cuenta,
+                        tercero=mov.tercero,
+                        tipo='debito' if mov.debito > 0 else 'credito',
+                        monto=mov.debito if mov.debito > 0 else mov.credito,
+                        orden=i,
+                    )
+            except AsientoContable.DoesNotExist:
+                plantilla.delete()
+                return Response({'error': 'Asiento no encontrado'}, status=404)
+        else:
+            # Crear desde líneas enviadas
+            for i, l in enumerate(lineas):
+                try:
+                    cuenta = Cuenta.objects.get(empresa_id=empresa_id, codigo=l['cuenta_codigo'])
+                except Cuenta.DoesNotExist:
+                    continue
+                from terceros.models import Tercero
+                tercero = None
+                if l.get('tercero_id'):
+                    tercero = Tercero.objects.filter(id=l['tercero_id']).first()
+                PlantillaLinea.objects.create(
+                    plantilla=plantilla,
+                    cuenta=cuenta,
+                    tercero=tercero,
+                    tipo=l.get('tipo', 'debito'),
+                    monto=Decimal(str(l.get('monto', 0))),
+                    orden=i,
+                )
+
+        # Programación si se solicita
+        if dia_del_mes:
+            AsientoProgramado.objects.create(
+                empresa_id=empresa_id,
+                plantilla=plantilla,
+                dia_del_mes=int(dia_del_mes),
+            )
+
+        return Response({
+            'success': True,
+            'id': plantilla.id,
+            'nombre': plantilla.nombre,
+            'lineas': plantilla.lineas.count(),
+        }, status=201)
+
+
+class PlantillaEliminarView(views.APIView):
+    """Eliminar plantilla."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        from .models import PlantillaAsiento
+        try:
+            p = PlantillaAsiento.objects.get(id=pk)
+            p.delete()
+            return Response({'success': True})
+        except PlantillaAsiento.DoesNotExist:
+            return Response({'error': 'Plantilla no encontrada'}, status=404)
+
+
+class ProgramadoToggleView(views.APIView):
+    """Crear/actualizar/toggle programación de una plantilla."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        plantilla_id = request.data.get('plantilla_id')
+        dia_del_mes = request.data.get('dia_del_mes')
+        activo = request.data.get('activo', True)
+        empresa_id = request.data.get('empresa')
+
+        if not plantilla_id:
+            return Response({'error': 'plantilla_id requerido'}, status=400)
+
+        from .models import AsientoProgramado
+        prog, created = AsientoProgramado.objects.update_or_create(
+            plantilla_id=plantilla_id,
+            empresa_id=empresa_id,
+            defaults={
+                'dia_del_mes': int(dia_del_mes) if dia_del_mes else 1,
+                'activo': activo,
+            }
+        )
+
+        return Response({
+            'id': prog.id,
+            'dia_del_mes': prog.dia_del_mes,
+            'activo': prog.activo,
+            'created': created,
+        })
+
+
+class GenerarBorradoresView(views.APIView):
+    """
+    Genera borradores pendientes para el mes actual.
+    Los asientos programados activos cuyo día ya pasó y no se han generado
+    este mes se crean como asientos normales.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        empresa_id = request.data.get('empresa')
+        if not empresa_id:
+            return Response({'error': 'empresa requerida'}, status=400)
+
+        from .models import AsientoProgramado, PlantillaLinea
+        hoy = date.today()
+        primer_dia_mes = date(hoy.year, hoy.month, 1)
+
+        programados = AsientoProgramado.objects.filter(
+            empresa_id=empresa_id,
+            activo=True,
+        ).select_related('plantilla').prefetch_related('plantilla__lineas', 'plantilla__lineas__cuenta', 'plantilla__lineas__tercero')
+
+        generados = []
+        for prog in programados:
+            # Ya generado este mes?
+            if prog.ultimo_generado and prog.ultimo_generado >= primer_dia_mes:
+                continue
+
+            # El día pactado ya pasó (o es hoy)?
+            dia = min(prog.dia_del_mes, 28)  # Evitar Feb 29+
+            if hoy.day < dia:
+                continue
+
+            fecha_asiento = date(hoy.year, hoy.month, dia)
+            plantilla = prog.plantilla
+
+            asiento = AsientoContable.objects.create(
+                empresa_id=empresa_id,
+                fecha=fecha_asiento,
+                concepto=f"[BORRADOR] {plantilla.concepto}",
+                tipo_comprobante=plantilla.tipo_comprobante,
+                fiscal_year=fecha_asiento.year,
+                fiscal_period=fecha_asiento.month,
+            )
+
+            for linea in plantilla.lineas.all():
+                MovimientoContable.objects.create(
+                    asiento=asiento,
+                    cuenta=linea.cuenta,
+                    tercero=linea.tercero,
+                    debito=linea.monto if linea.tipo == 'debito' else Decimal('0'),
+                    credito=linea.monto if linea.tipo == 'credito' else Decimal('0'),
+                )
+
+            prog.ultimo_generado = hoy
+            prog.save()
+
+            generados.append({
+                'plantilla': plantilla.nombre,
+                'asiento_id': asiento.id,
+                'numero': f"{asiento.tipo_comprobante}-{asiento.numero:04d}",
+                'fecha': str(fecha_asiento),
+            })
+
+        return Response({
+            'generados': generados,
+            'count': len(generados),
+            'mensaje': f"Se generaron {len(generados)} borradores" if generados else "No hay borradores pendientes",
+        })
