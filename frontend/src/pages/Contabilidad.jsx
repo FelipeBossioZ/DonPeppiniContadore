@@ -10,6 +10,7 @@ import { toast } from "../ui/ToastHost";
 import ImportarAsientosModal from '../components/ImportarAsientosModal';
 import { FileSpreadsheet } from 'lucide-react';
 import { useEmpresa } from '../context/EmpresaContext';
+import api from '../services/api';
 
 
 // Modal simple reutilizable
@@ -794,6 +795,11 @@ export default function Contabilidad() {
                             title="Crear nueva cuenta"
                           >+</button>
                         </div>
+                        {codigoValido && (
+                          <div className="text-xs text-gray-500 mt-0.5 truncate" title={cuentas.find(c => String(c.codigo) === String(r.cuenta))?.nombre}>
+                            {cuentas.find(c => String(c.codigo) === String(r.cuenta))?.nombre}
+                          </div>
+                        )}
                         {rowErrors[i]?.code && (
                           <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mt-1">
                             {rowErrors[i].code}
@@ -1132,6 +1138,27 @@ export default function Contabilidad() {
                 onClick={() => { setOpenDet(null); duplicateAsiento(openDet); }}
               >
                 Duplicar este asiento
+              </button>
+              <button
+                className="px-4 py-2 rounded bg-purple-600 text-white hover:bg-purple-700 text-sm"
+                onClick={async () => {
+                  const nombre = prompt('Nombre para la plantilla:');
+                  if (!nombre) return;
+                  const dia = prompt('Programar mensual? Día del mes (1-28, vacío = no programar):');
+                  try {
+                    await api.post('/contabilidad/plantillas/crear/', {
+                      empresa: empresaId,
+                      nombre,
+                      desde_asiento_id: openDet.id,
+                      dia_del_mes: dia || undefined,
+                    });
+                    alert('✅ Plantilla creada: ' + nombre);
+                  } catch (err) {
+                    alert('Error: ' + (err.response?.data?.error || err.message));
+                  }
+                }}
+              >
+                Guardar como plantilla
               </button>
             </div>
           </div>

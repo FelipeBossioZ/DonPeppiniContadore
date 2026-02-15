@@ -688,3 +688,64 @@ class BitacoraAuditoria(models.Model):
 
     def __str__(self):
         return f"[{self.fecha:%Y-%m-%d %H:%M}] {self.get_accion_display()} - {self.usuario}"
+
+
+# ============================================================
+# 🎩 PLANTILLAS DE ASIENTO
+# ============================================================
+class PlantillaAsiento(models.Model):
+    """Plantilla reutilizable para crear asientos rápidamente."""
+    empresa = models.ForeignKey('empresas.Empresa', on_delete=models.CASCADE, related_name='plantillas_asiento')
+    nombre = models.CharField(max_length=200, verbose_name="Nombre de la plantilla")
+    concepto = models.CharField(max_length=500, blank=True, verbose_name="Concepto base")
+    tipo_comprobante = models.CharField(max_length=3, default='OT', verbose_name="Tipo comprobante")
+    notas = models.TextField(blank=True, null=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['nombre']
+        unique_together = ['empresa', 'nombre']
+        verbose_name = "Plantilla de Asiento"
+
+    def __str__(self):
+        return self.nombre
+
+
+class PlantillaLinea(models.Model):
+    """Línea de una plantilla de asiento."""
+    plantilla = models.ForeignKey(PlantillaAsiento, on_delete=models.CASCADE, related_name='lineas')
+    cuenta = models.ForeignKey('contabilidad.Cuenta', on_delete=models.CASCADE)
+    tercero = models.ForeignKey('terceros.Tercero', on_delete=models.SET_NULL, null=True, blank=True)
+    tipo = models.CharField(max_length=7, choices=[('debito', 'Débito'), ('credito', 'Crédito')])
+    monto = models.DecimalField(max_digits=15, decimal_places=2, default=0,
+        help_text="Monto fijo. 0 = se llena manualmente al usar la plantilla.")
+    orden = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['orden', 'id']
+
+    def __str__(self):
+        return f"{self.tipo} {self.cuenta.codigo} — ${self.monto}"
+
+
+# ============================================================
+# 🎩 ASIENTOS PROGRAMADOS (Borradores recurrentes)
+# ============================================================
+class AsientoProgramado(models.Model):
+    """Asiento que se genera automáticamente como borrador en fecha pactada."""
+    empresa = models.ForeignKey('empresas.Empresa', on_delete=models.CASCADE, related_name='asientos_programados')
+    plantilla = models.ForeignKey(PlantillaAsiento, on_delete=models.CASCADE, related_name='programaciones')
+    dia_del_mes = models.PositiveSmallIntegerField(
+        verbose_name="Día del mes",
+        help_text="Día en que se genera el borrador (1-28)")
+    activo = models.BooleanField(default=True)
+    ultimo_generado = models.DateField(null=True, blank=True,
+        help_text="Última fecha en que se generó un borrador")
+    notas = models.TextField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Asiento Programado"
+        verbose_name_plural = "Asientos Programados"
+
+    def __str__(self):
+        return f"{self.plantilla.nombre} — Día {self.dia_del_mes} {'✅' if self.activo else '❌'}"

@@ -66,6 +66,81 @@ class CuentaSerializer(serializers.ModelSerializer):
                 return padre
         return None
 
+    # Nombres PUC estándar para auto-creación de padres
+    PUC_NOMBRES = {
+        '1': 'Activo', '2': 'Pasivo', '3': 'Patrimonio',
+        '4': 'Ingresos', '5': 'Gastos', '6': 'Costos de venta',
+        '7': 'Costos de producción', '8': 'Cuentas de orden deudoras',
+        '9': 'Cuentas de orden acreedoras',
+        '11': 'Disponible', '12': 'Inversiones', '13': 'Deudores',
+        '14': 'Inventarios', '15': 'Propiedad, planta y equipo',
+        '16': 'Intangibles', '17': 'Diferidos', '18': 'Otros activos',
+        '19': 'Valorizaciones',
+        '21': 'Obligaciones financieras', '22': 'Proveedores',
+        '23': 'Cuentas por pagar', '24': 'Impuestos, gravámenes y tasas',
+        '25': 'Obligaciones laborales', '26': 'Pasivos estimados y provisiones',
+        '27': 'Diferidos', '28': 'Otros pasivos', '29': 'Bonos y papeles comerciales',
+        '31': 'Capital social', '32': 'Superávit de capital',
+        '33': 'Reservas', '34': 'Revalorización del patrimonio',
+        '35': 'Dividendos', '36': 'Resultados del ejercicio',
+        '37': 'Resultados de ejercicios anteriores',
+        '38': 'Superávit por valorizaciones',
+        '41': 'Operacionales', '42': 'No operacionales',
+        '51': 'Operacionales de administración', '52': 'Operacionales de ventas',
+        '53': 'No operacionales', '54': 'Impuesto de renta',
+        '59': 'Ganancias y pérdidas',
+        '61': 'Costo de ventas', '62': 'Compras',
+        '71': 'Materia prima', '72': 'Mano de obra directa',
+        '73': 'Costos indirectos', '74': 'Contratos de servicios',
+        # Cuentas nivel 4 comunes
+        '1105': 'Caja', '1110': 'Bancos', '1120': 'Cuentas de ahorro',
+        '1305': 'Clientes', '1355': 'Anticipo de impuestos',
+        '1380': 'Deudores varios',
+        '1504': 'Terrenos', '1516': 'Construcciones y edificaciones',
+        '1520': 'Maquinaria y equipo', '1524': 'Equipo de oficina',
+        '1528': 'Equipo de computación', '1540': 'Flota y equipo de transporte',
+        '1592': 'Depreciación acumulada',
+        '1705': 'Gastos pagados por anticipado',
+        '2105': 'Bancos nacionales', '2205': 'Proveedores nacionales',
+        '2305': 'Cuentas corrientes comerciales', '2335': 'Costos y gastos por pagar',
+        '2365': 'Retención en la fuente', '2367': 'Impuesto a las ventas retenido',
+        '2368': 'Impuesto de industria y comercio retenido',
+        '2370': 'Retenciones y aportes de nómina',
+        '2380': 'Acreedores varios',
+        '2404': 'De renta y complementarios', '2408': 'Impuesto sobre las ventas',
+        '2505': 'Salarios por pagar', '2510': 'Cesantías consolidadas',
+        '2515': 'Intereses sobre cesantías', '2520': 'Prima de servicios',
+        '2525': 'Vacaciones consolidadas',
+        '3105': 'Capital suscrito y pagado', '3115': 'Aportes sociales',
+        '3605': 'Utilidad del ejercicio', '3610': 'Pérdida del ejercicio',
+        '3705': 'Utilidades acumuladas', '3710': 'Pérdidas acumuladas',
+    }
+
+    def _ensure_parents(self, codigo, empresa):
+        """Auto-crear cuentas padres intermedias que no existan."""
+        # Jerarquía PUC: 1 dígito (Clase), 2 (Grupo), 4 (Cuenta), 6 (Subcuenta)
+        niveles = [1, 2, 4, 6]
+        creados = []
+        
+        for n in niveles:
+            if n >= len(codigo):
+                break
+            prefix = codigo[:n]
+            if not Cuenta.objects.filter(empresa=empresa, codigo=prefix).exists():
+                auto = self._auto_fields(prefix)
+                nombre = self.PUC_NOMBRES.get(prefix, f"{'Clase Grupo Cuenta Subcuenta'.split()[niveles.index(n)]} {prefix}")
+                padre = self._resolve_padre(prefix, empresa)
+                Cuenta.objects.create(
+                    empresa=empresa,
+                    codigo=prefix,
+                    nombre=nombre,
+                    padre=padre,
+                    **auto
+                )
+                creados.append(prefix)
+        
+        return creados
+
     def create(self, validated_data):
         padre_codigo = validated_data.pop("padre_codigo", None)
         codigo = validated_data.get("codigo", "")
@@ -75,8 +150,12 @@ class CuentaSerializer(serializers.ModelSerializer):
         for k, v in auto.items():
             validated_data.setdefault(k, v)
 
-        # Resolver padre
+        # Auto-crear padres intermedios que no existan
         empresa = validated_data.get("empresa")
+        if empresa and len(codigo) > 1:
+            self._ensure_parents(codigo, empresa)
+
+        # Resolver padre
         if padre_codigo:
             try:
                 validated_data["padre"] = Cuenta.objects.get(

@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from .models import ParametrosNomina, Empleado, Nomina, LiquidacionEmpleado, DetalleHorasExtras, LiquidacionContrato
+from empresas.models import Empresa
 from .serializers import (
     ParametrosNominaSerializer, EmpleadoSerializer,
     NominaSerializer, LiquidacionEmpleadoSerializer,
@@ -830,3 +831,78 @@ class ImportarEmpleadosView(APIView):
             })
         except Exception as e:
             return Response({'error': str(e)}, status=400)
+
+
+# ============================================================
+# 🎩 PILA — Seguridad Social y Parafiscales
+# ============================================================
+
+class PILAPreviewView(APIView):
+    """Preview de PILA: calcula montos sin crear asiento."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        empresa_id = request.query_params.get('empresa')
+        anio = request.query_params.get('anio')
+        mes = request.query_params.get('mes')
+
+        if not all([empresa_id, anio, mes]):
+            return Response({'error': 'empresa, anio y mes son requeridos'}, status=400)
+
+        try:
+            empresa = Empresa.objects.get(id=empresa_id)
+        except Empresa.DoesNotExist:
+            return Response({'error': 'Empresa no encontrada'}, status=404)
+
+        from .pila import calcular_pila
+        result = calcular_pila(empresa, int(anio), int(mes))
+
+        if 'error' in result:
+            return Response(result, status=400)
+
+        return Response(result)
+
+
+class PILACausarView(APIView):
+    """Info: la causación ya se hace al liquidar nómina."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({
+            'info': 'La causación de aportes se genera automáticamente al liquidar la nómina. '
+                    'Use el endpoint de pago para registrar el desembolso.'
+        })
+
+
+class PILAPagarView(APIView):
+    """Genera asiento de pago de PILA."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        empresa_id = request.data.get('empresa')
+        anio = request.data.get('anio')
+        mes = request.data.get('mes')
+        fecha = request.data.get('fecha')
+        cuenta_banco = request.data.get('cuenta_banco')
+
+        if not all([empresa_id, anio, mes, fecha, cuenta_banco]):
+            return Response({'error': 'empresa, anio, mes, fecha y cuenta_banco son requeridos'}, status=400)
+
+        try:
+            empresa = Empresa.objects.get(id=empresa_id)
+        except Empresa.DoesNotExist:
+            return Response({'error': 'Empresa no encontrada'}, status=404)
+
+        from datetime import datetime
+        try:
+            fecha_obj = datetime.strptime(fecha, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Fecha inválida (YYYY-MM-DD)'}, status=400)
+
+        from .pila import pagar_pila
+        result = pagar_pila(empresa, int(anio), int(mes), fecha_obj, cuenta_banco, request.user)
+
+        if 'error' in result:
+            return Response(result, status=400)
+
+        return Response(result, status=201)

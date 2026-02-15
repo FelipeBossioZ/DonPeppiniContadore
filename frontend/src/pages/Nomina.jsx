@@ -3,7 +3,7 @@ import React, { useState, useMemo } from "react";
 import {
   Users, Plus, Edit2, Trash2, DollarSign, CheckCircle, Eye, X,
   ChevronDown, ChevronUp, Calculator, Briefcase, AlertCircle,
-  FileDown, Upload,
+  FileDown, Upload, Shield,
 } from "lucide-react";
 import { useEmpresa } from "../context/EmpresaContext";
 import { useTerceros } from "../hooks/useTerceros";
@@ -13,6 +13,7 @@ import {
   useParametrosNomina,
 } from "../hooks/useNomina";
 import { descargarComprobantePDF, importarEmpleados } from "../services/api";
+import PILA from "./PILA";
 
 const MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
@@ -512,6 +513,10 @@ export default function Nomina() {
             className={`px-4 py-2 rounded-lg text-sm font-medium transition ${tab === "empleados" ? "bg-indigo-600 text-white" : "bg-white border text-gray-700 hover:bg-gray-50"}`}>
             <Users size={16} className="inline mr-1" /> Empleados ({empleados.length})
           </button>
+          <button onClick={() => setTab("pila")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${tab === "pila" ? "bg-indigo-600 text-white" : "bg-white border text-gray-700 hover:bg-gray-50"}`}>
+            <Shield size={16} className="inline mr-1" /> PILA
+          </button>
         </div>
       </div>
 
@@ -784,6 +789,9 @@ export default function Nomina() {
           onLiquidar={novedades => handleLiquidar(showNovedades, novedades)}
         />
       )}
+
+      {/* ============ TAB PILA ============ */}
+      {tab === "pila" && <PILA />}
 
       {showLiqDetail && (
         <LiquidacionDetailModal

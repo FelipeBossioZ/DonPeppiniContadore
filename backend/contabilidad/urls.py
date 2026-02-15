@@ -63,6 +63,15 @@ from .views import (
     AuditoriaConcentracionTercerosView,
     AuditoriaComparativoMensualView,
     AuditoriaResumenView,
+    #CxP / CxC
+    CxPCxCPendientesView,
+    PagarCxPView,
+    #Plantillas y Programados
+    PlantillasListView,
+    PlantillaCrearView,
+    PlantillaEliminarView,
+    ProgramadoToggleView,
+    GenerarBorradoresView,
 )
 
 router = DefaultRouter()
@@ -140,4 +149,13 @@ urlpatterns = [
     path('auditoria/sin-soporte/', AuditoriaSinSoporteView.as_view()),
     path('auditoria/concentracion-terceros/', AuditoriaConcentracionTercerosView.as_view()),
     path('auditoria/comparativo-mensual/', AuditoriaComparativoMensualView.as_view()),
+    # CxP / CxC
+    path('cxp-cxc/pendientes/', CxPCxCPendientesView.as_view()),
+    path('cxp-cxc/pagar/', PagarCxPView.as_view()),
+    # Plantillas y Programados
+    path('plantillas/', PlantillasListView.as_view()),
+    path('plantillas/crear/', PlantillaCrearView.as_view()),
+    path('plantillas/<int:pk>/eliminar/', PlantillaEliminarView.as_view()),
+    path('plantillas/programado/', ProgramadoToggleView.as_view()),
+    path('plantillas/generar-borradores/', GenerarBorradoresView.as_view()),
 ]

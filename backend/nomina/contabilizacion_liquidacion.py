@@ -21,7 +21,7 @@ CUENTAS_LIQ = {
     'por_pagar':           ('250505', 'Salarios por pagar'),
     'retencion_fuente':    ('236505', 'Retención fuente - salarios'),
     'aportes_eps':         ('237005', 'Aportes a EPS'),
-    'aportes_pension':     ('237006', 'Aportes a fondos de pensiones'),
+    'aportes_pension':     ('237045', 'Aportes a fondos de pensiones'),
     # Contra-provisiones (Débitos para reversar provisiones acumuladas)
     'cesantias_consolidadas': ('261005', 'Cesantías consolidadas'),
     'int_cesantias_pagar':    ('261505', 'Intereses sobre cesantías'),
@@ -31,8 +31,8 @@ CUENTAS_LIQ = {
 
 
 def _asegurar_cuenta(empresa, codigo, nombre):
-    """Busca o crea la cuenta PUC."""
-    cuenta, _ = Cuenta.objects.get_or_create(
+    """Busca o crea la cuenta PUC. Actualiza nombres genéricos."""
+    cuenta, created = Cuenta.objects.get_or_create(
         empresa=empresa,
         codigo=codigo,
         defaults={
@@ -42,6 +42,12 @@ def _asegurar_cuenta(empresa, codigo, nombre):
             'tipo': 'Auxiliar' if len(codigo) >= 6 else 'Subcuenta',
         }
     )
+    if not created and cuenta.nombre != nombre:
+        nombres_genericos = ['Fondos', 'Embargos judiciales', 'Aportes al FIC',
+                             'Aportes al ICBF, SENA y cajas de compensación']
+        if cuenta.nombre in nombres_genericos or len(cuenta.nombre) < 5:
+            cuenta.nombre = nombre
+            cuenta.save(update_fields=['nombre'])
     return cuenta
 
 
@@ -68,6 +74,9 @@ def contabilizar_liquidacion_contrato(liq):
         tercero=tercero,
         concepto=concepto,
         descripcion=f"Contabilización automática — {concepto}",
+        tipo_comprobante='NM',
+        fiscal_year=liq.fecha_retiro.year,
+        fiscal_period=liq.fecha_retiro.month,
     )
 
     lineas = []

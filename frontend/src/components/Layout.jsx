@@ -21,6 +21,8 @@ import {
   Gift,
   Upload,
   Shield,
+  CreditCard,
+  Bookmark,
 } from 'lucide-react';
 import { authService } from '../services/auth';
 import EmpresaSelector from './EmpresaSelector';
@@ -42,6 +44,8 @@ const Layout = () => {
     { name: 'Dashboard', href: '/dashboard', icon: Home },
     { name: 'Terceros', href: '/terceros', icon: Users },
     { name: 'Contabilidad', href: '/contabilidad', icon: BookOpen },
+    { name: 'CxP / CxC', href: '/cxp-cxc', icon: CreditCard },
+    { name: 'Plantillas', href: '/plantillas', icon: Bookmark },
     { name: 'Facturación', href: '/facturacion', icon: FileText },
     { name: 'Importar DIAN', href: '/importar-dian', icon: Upload },
     { name: 'Nómina', href: '/nomina', icon: Briefcase },
