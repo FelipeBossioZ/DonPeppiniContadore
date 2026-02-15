@@ -77,41 +77,6 @@ const TIPOS_COMPROBANTE = [
 ];
 
 
-// PlantillaLoader mini-component
-function PlantillaLoader({ empresaId, onLoad }) {
-  const [lista, setLista] = useState(null);
-  const cargar = async () => {
-    try {
-      const res = await api.get('/contabilidad/plantillas/', { params: { empresa: empresaId } });
-      setLista(res.data);
-    } catch(e) { setLista([]); }
-  };
-  return (
-    <div className="flex items-center gap-2 p-2 bg-purple-50 rounded-lg">
-      <span className="text-xs text-purple-600 font-medium whitespace-nowrap">📋 Plantilla:</span>
-      {lista === null ? (
-        <button type="button" onClick={cargar}
-          className="text-xs text-purple-700 bg-purple-100 px-3 py-1 rounded hover:bg-purple-200">
-          Cargar plantillas
-        </button>
-      ) : lista.length === 0 ? (
-        <span className="text-xs text-gray-400">No hay plantillas guardadas</span>
-      ) : (
-        <select className="border rounded px-2 py-1 text-sm flex-1" defaultValue=""
-          onChange={(e) => {
-            const p = lista.find(x => x.id === parseInt(e.target.value));
-            if (p) onLoad(p);
-          }}>
-          <option value="">Seleccionar...</option>
-          {lista.map(p => (
-            <option key={p.id} value={p.id}>{p.nombre} ({p.lineas.length} líneas)</option>
-          ))}
-        </select>
-      )}
-    </div>
-  );
-}
-
 export default function Contabilidad() {
   const { empresaId } = useEmpresa();
 
