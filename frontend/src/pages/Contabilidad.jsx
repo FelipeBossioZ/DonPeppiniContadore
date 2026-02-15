@@ -700,8 +700,39 @@ export default function Contabilidad() {
 
 
       {/* ====== MODAL: Nuevo Asiento ====== */}
-      <Modal open={openForm} onClose={() => setOpenForm(false)} title="Nuevo asiento contable" footer={null} wide>
-        <form onSubmit={onSubmitAsiento} className="grid grid-cols-1 gap-4">
+      <Modal open={openForm} onClose={() => setOpenForm(false)} title="Nuevo asiento contable" wide
+        footer={
+          <div className="flex justify-end gap-2">
+            <button type="button" className="px-4 py-2 rounded border hover:bg-gray-50" onClick={() => setOpenForm(false)}>
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="asiento-form"
+              disabled={!balanceOk || create.isPending}
+              className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {create.isPending ? "Creando…" : "Crear asiento"}
+            </button>
+          </div>
+        }>
+        {/* Cargador de plantillas — FUERA del form para no romper el grid */}
+        <PlantillaLoader empresaId={empresaId} onLoad={(p) => {
+          setForm(f => ({
+            ...f,
+            tipo_comprobante: p.tipo_comprobante || f.tipo_comprobante,
+            concepto: p.concepto || f.concepto,
+          }));
+          const rows = p.lineas.map(l => ({
+            cuenta: l.cuenta_codigo,
+            tercero_id: l.tercero_id || "",
+            debito: l.tipo === "D" ? l.monto : 0,
+            credito: l.tipo === "C" ? l.monto : 0,
+          }));
+          setMovRows(rows.length >= 2 ? rows : [...rows, { cuenta: "", tercero_id: "", debito: 0, credito: 0 }]);
+        }} />
+
+        <form id="asiento-form" onSubmit={onSubmitAsiento} className="grid grid-cols-1 gap-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {/* Tipo de Comprobante */}
             <div>
@@ -953,19 +984,6 @@ export default function Contabilidad() {
               {serverError}
             </div>
           )}
-
-          <div className="flex justify-end gap-2">
-            <button type="button" className="px-3 py-2 rounded border" onClick={() => setOpenForm(false)}>
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={!balanceOk || create.isPending}
-              className="px-3 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
-            >
-              {create.isPending ? "Creando…" : "Crear asiento"}
-            </button>
-          </div>
 
           {/* RÓTULO DEL PERIODO */}
           <div className="col-span-full w-full">
