@@ -129,6 +129,24 @@ export default function Contabilidad() {
   const [openForm, setOpenForm] = useState(false);
   const [serverError, setServerError] = useState(null);
   const emptyRow = { cuenta:"", tercero_id:"", debito:0, credito:0 };
+
+  // Evaluar expresiones tipo Excel: =1750905*0.04, 1000+500, 2000000/12
+  const evalExpr = (val) => {
+    if (val === "" || val === null || val === undefined) return 0;
+    let s = String(val).trim();
+    if (s.startsWith("=")) s = s.slice(1);
+    // Solo permitir números, operadores, paréntesis, punto, coma y espacios
+    if (!/^[\d+\-*/().,%\s]+$/.test(s)) return Number(val) || 0;
+    try {
+      // Reemplazar comas por puntos para decimales
+      s = s.replace(/,/g, '.');
+      // Reemplazar % por /100
+      s = s.replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
+      const result = Function('"use strict"; return (' + s + ')')();
+      if (typeof result === "number" && isFinite(result)) return Math.round(result * 100) / 100;
+    } catch {}
+    return Number(val) || 0;
+  };
   const [form, setForm] = useState({ fecha: todayISO(), tipo_comprobante: "OT", concepto:"", tercero_id:"", descripcion_adicional:"", es_ajuste: false });
   const [movRows, setMovRows] = useState([{...emptyRow},{...emptyRow}]);
 
@@ -907,13 +925,20 @@ export default function Contabilidad() {
                       {/* Débito */}
                       <td className="p-2">
                         <input
-                          type="number" min="0" step="0.01"
-                          className="border rounded px-3 py-2 w-full"
+                          type="text" inputMode="decimal"
+                          className="border rounded px-3 py-2 w-full text-right"
+                          placeholder="0"
                           value={r.debito}
                           onChange={(e) => {
                             const v = e.target.value;
                             setMovRows(rows => rows.map((x, idx) =>
-                              idx === i ? { ...x, debito: v, credito: v && Number(v) > 0 ? 0 : x.credito } : x
+                              idx === i ? { ...x, debito: v } : x
+                            ));
+                          }}
+                          onBlur={() => {
+                            const v = evalExpr(r.debito);
+                            setMovRows(rows => rows.map((x, idx) =>
+                              idx === i ? { ...x, debito: v, credito: v > 0 ? 0 : x.credito } : x
                             ));
                           }}
                           disabled={Number(r.credito) > 0}
@@ -923,13 +948,20 @@ export default function Contabilidad() {
                       {/* Crédito */}
                       <td className="p-2">
                         <input
-                          type="number" min="0" step="0.01"
-                          className="border rounded px-3 py-2 w-full"
+                          type="text" inputMode="decimal"
+                          className="border rounded px-3 py-2 w-full text-right"
+                          placeholder="0"
                           value={r.credito}
                           onChange={(e) => {
                             const v = e.target.value;
                             setMovRows(rows => rows.map((x, idx) =>
-                              idx === i ? { ...x, credito: v, debito: v && Number(v) > 0 ? 0 : x.debito } : x
+                              idx === i ? { ...x, credito: v } : x
+                            ));
+                          }}
+                          onBlur={() => {
+                            const v = evalExpr(r.credito);
+                            setMovRows(rows => rows.map((x, idx) =>
+                              idx === i ? { ...x, credito: v, debito: v > 0 ? 0 : x.debito } : x
                             ));
                           }}
                           disabled={Number(r.debito) > 0}
