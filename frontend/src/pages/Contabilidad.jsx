@@ -77,6 +77,41 @@ const TIPOS_COMPROBANTE = [
 ];
 
 
+// PlantillaLoader mini-component
+function PlantillaLoader({ empresaId, onLoad }) {
+  const [lista, setLista] = useState(null);
+  const cargar = async () => {
+    try {
+      const res = await api.get('/contabilidad/plantillas/', { params: { empresa: empresaId } });
+      setLista(res.data);
+    } catch(e) { setLista([]); }
+  };
+  return (
+    <div className="flex items-center gap-2 p-2 bg-purple-50 rounded-lg">
+      <span className="text-xs text-purple-600 font-medium whitespace-nowrap">📋 Plantilla:</span>
+      {lista === null ? (
+        <button type="button" onClick={cargar}
+          className="text-xs text-purple-700 bg-purple-100 px-3 py-1 rounded hover:bg-purple-200">
+          Cargar plantillas
+        </button>
+      ) : lista.length === 0 ? (
+        <span className="text-xs text-gray-400">No hay plantillas guardadas</span>
+      ) : (
+        <select className="border rounded px-2 py-1 text-sm flex-1" defaultValue=""
+          onChange={(e) => {
+            const p = lista.find(x => x.id === parseInt(e.target.value));
+            if (p) onLoad(p);
+          }}>
+          <option value="">Seleccionar...</option>
+          {lista.map(p => (
+            <option key={p.id} value={p.id}>{p.nombre} ({p.lineas.length} líneas)</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 export default function Contabilidad() {
   const { empresaId } = useEmpresa();
 
@@ -94,6 +129,24 @@ export default function Contabilidad() {
   const [openForm, setOpenForm] = useState(false);
   const [serverError, setServerError] = useState(null);
   const emptyRow = { cuenta:"", tercero_id:"", debito:0, credito:0 };
+
+  // Evaluar expresiones tipo Excel: =1750905*0.04, 1000+500, 2000000/12
+  const evalExpr = (val) => {
+    if (val === "" || val === null || val === undefined) return 0;
+    let s = String(val).trim();
+    if (s.startsWith("=")) s = s.slice(1);
+    // Solo permitir números, operadores, paréntesis, punto, coma y espacios
+    if (!/^[\d+\-*/().,%\s]+$/.test(s)) return Number(val) || 0;
+    try {
+      // Reemplazar comas por puntos para decimales
+      s = s.replace(/,/g, '.');
+      // Reemplazar % por /100
+      s = s.replace(/(\d+(?:\.\d+)?)%/g, '($1/100)');
+      const result = Function('"use strict"; return (' + s + ')')();
+      if (typeof result === "number" && isFinite(result)) return Math.round(result * 100) / 100;
+    } catch {}
+    return Number(val) || 0;
+  };
   const [form, setForm] = useState({ fecha: todayISO(), tipo_comprobante: "OT", concepto:"", tercero_id:"", descripcion_adicional:"", es_ajuste: false });
   const [movRows, setMovRows] = useState([{...emptyRow},{...emptyRow}]);
 
@@ -665,8 +718,39 @@ export default function Contabilidad() {
 
 
       {/* ====== MODAL: Nuevo Asiento ====== */}
-      <Modal open={openForm} onClose={() => setOpenForm(false)} title="Nuevo asiento contable" footer={null} wide>
-        <form onSubmit={onSubmitAsiento} className="grid grid-cols-1 gap-4">
+      <Modal open={openForm} onClose={() => setOpenForm(false)} title="Nuevo asiento contable" wide
+        footer={
+          <div className="flex justify-end gap-2">
+            <button type="button" className="px-4 py-2 rounded border hover:bg-gray-50" onClick={() => setOpenForm(false)}>
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              form="asiento-form"
+              disabled={!balanceOk || create.isPending}
+              className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {create.isPending ? "Creando…" : "Crear asiento"}
+            </button>
+          </div>
+        }>
+        {/* Cargador de plantillas — FUERA del form para no romper el grid */}
+        <PlantillaLoader empresaId={empresaId} onLoad={(p) => {
+          setForm(f => ({
+            ...f,
+            tipo_comprobante: p.tipo_comprobante || f.tipo_comprobante,
+            concepto: p.concepto || f.concepto,
+          }));
+          const rows = p.lineas.map(l => ({
+            cuenta: l.cuenta_codigo,
+            tercero_id: l.tercero_id || "",
+            debito: l.tipo === "D" ? l.monto : 0,
+            credito: l.tipo === "C" ? l.monto : 0,
+          }));
+          setMovRows(rows.length >= 2 ? rows : [...rows, { cuenta: "", tercero_id: "", debito: 0, credito: 0 }]);
+        }} />
+
+        <form id="asiento-form" onSubmit={onSubmitAsiento} className="grid grid-cols-1 gap-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {/* Tipo de Comprobante */}
             <div>
@@ -815,7 +899,7 @@ export default function Contabilidad() {
                         )}
                         <datalist id={`cuentas-sug-${i}`}>
                           {sugeridas.map((c) => (
-                            <option key={c.codigo} value={c.codigo}>
+                            <option key={c.id || c.codigo} value={c.codigo}>
                               {c.codigo} — {c.nombre}
                             </option>
                           ))}
@@ -841,13 +925,20 @@ export default function Contabilidad() {
                       {/* Débito */}
                       <td className="p-2">
                         <input
-                          type="number" min="0" step="0.01"
-                          className="border rounded px-3 py-2 w-full"
+                          type="text" inputMode="decimal"
+                          className="border rounded px-3 py-2 w-full text-right"
+                          placeholder="0"
                           value={r.debito}
                           onChange={(e) => {
                             const v = e.target.value;
                             setMovRows(rows => rows.map((x, idx) =>
-                              idx === i ? { ...x, debito: v, credito: v && Number(v) > 0 ? 0 : x.credito } : x
+                              idx === i ? { ...x, debito: v } : x
+                            ));
+                          }}
+                          onBlur={() => {
+                            const v = evalExpr(r.debito);
+                            setMovRows(rows => rows.map((x, idx) =>
+                              idx === i ? { ...x, debito: v, credito: v > 0 ? 0 : x.credito } : x
                             ));
                           }}
                           disabled={Number(r.credito) > 0}
@@ -857,13 +948,20 @@ export default function Contabilidad() {
                       {/* Crédito */}
                       <td className="p-2">
                         <input
-                          type="number" min="0" step="0.01"
-                          className="border rounded px-3 py-2 w-full"
+                          type="text" inputMode="decimal"
+                          className="border rounded px-3 py-2 w-full text-right"
+                          placeholder="0"
                           value={r.credito}
                           onChange={(e) => {
                             const v = e.target.value;
                             setMovRows(rows => rows.map((x, idx) =>
-                              idx === i ? { ...x, credito: v, debito: v && Number(v) > 0 ? 0 : x.debito } : x
+                              idx === i ? { ...x, credito: v } : x
+                            ));
+                          }}
+                          onBlur={() => {
+                            const v = evalExpr(r.credito);
+                            setMovRows(rows => rows.map((x, idx) =>
+                              idx === i ? { ...x, credito: v, debito: v > 0 ? 0 : x.debito } : x
                             ));
                           }}
                           disabled={Number(r.debito) > 0}
@@ -918,19 +1016,6 @@ export default function Contabilidad() {
               {serverError}
             </div>
           )}
-
-          <div className="flex justify-end gap-2">
-            <button type="button" className="px-3 py-2 rounded border" onClick={() => setOpenForm(false)}>
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={!balanceOk || create.isPending}
-              className="px-3 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
-            >
-              {create.isPending ? "Creando…" : "Crear asiento"}
-            </button>
-          </div>
 
           {/* RÓTULO DEL PERIODO */}
           <div className="col-span-full w-full">

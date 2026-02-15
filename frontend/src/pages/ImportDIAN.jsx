@@ -414,7 +414,7 @@ export default function ImportDIAN() {
                             ? (c.codigo.startsWith('5') || c.codigo.startsWith('6'))
                             : c.codigo.startsWith('13')
                           ).map(c => (
-                            <option key={c.codigo} value={c.codigo}>{c.codigo} - {c.nombre}</option>
+                            <option key={c.id || c.codigo} value={c.codigo}>{c.codigo} - {c.nombre}</option>
                           ))}
                         </datalist>
                       </td>
@@ -427,7 +427,7 @@ export default function ImportDIAN() {
                             list={`cuentas-ing-${i}`} />
                           <datalist id={`cuentas-ing-${i}`}>
                             {cuentas.filter(c => c.codigo.startsWith('4')).map(c => (
-                              <option key={c.codigo} value={c.codigo}>{c.codigo} - {c.nombre}</option>
+                              <option key={c.id || c.codigo} value={c.codigo}>{c.codigo} - {c.nombre}</option>
                             ))}
                           </datalist>
                         </td>

@@ -45,8 +45,11 @@ export default function CxPCxC() {
           (c.codigo.startsWith('1110') || c.codigo.startsWith('1105') || c.codigo.startsWith('1120'))
           && c.codigo.length >= 6
         );
-        setCuentasBanco(bancos);
-        if (bancos.length > 0) setCuentaBanco(bancos[0].codigo);
+        const seen = new Map();
+        bancos.forEach(c => { const ex = seen.get(c.codigo); if (!ex || (c.empresa && !ex.empresa)) seen.set(c.codigo, c); });
+        const unicos = [...seen.values()];
+        setCuentasBanco(unicos);
+        if (unicos.length > 0) setCuentaBanco(unicos[0].codigo);
       });
     }
   }, [empresaId]);
@@ -364,7 +367,7 @@ export default function CxPCxC() {
                 <select value={cuentaBanco} onChange={e => setCuentaBanco(e.target.value)}
                   className="border rounded-lg px-3 py-2 w-full mt-1">
                   {cuentasBanco.map(c => (
-                    <option key={c.codigo} value={c.codigo}>{c.codigo} — {c.nombre}</option>
+                    <option key={c.id || c.codigo} value={c.codigo}>{c.codigo} — {c.nombre}</option>
                   ))}
                 </select>
               </div>

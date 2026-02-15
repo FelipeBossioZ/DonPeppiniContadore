@@ -186,17 +186,106 @@ class NominaViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def pagar(self, request, pk=None):
-        """Marca la nómina como pagada."""
+        """Marca la nómina como pagada y genera asiento de pago (CE)."""
         nomina = self.get_object()
         if nomina.estado != 'liquidada':
             return Response(
                 {"detail": "Solo se pueden pagar nóminas liquidadas."},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        nomina.estado = 'pagada'
-        nomina.fecha_pago = request.data.get('fecha_pago', date.today())
-        nomina.save()
-        return Response(NominaSerializer(nomina).data)
+
+        cuenta_banco_codigo = request.data.get('cuenta_banco')
+        fecha_pago = request.data.get('fecha_pago', str(date.today()))
+
+        if not cuenta_banco_codigo:
+            # Si no envían cuenta, solo marcar pagada (backward compatible)
+            nomina.estado = 'pagada'
+            nomina.fecha_pago = fecha_pago
+            nomina.save()
+            return Response(NominaSerializer(nomina).data)
+
+        # Generar asiento de pago CE
+        from decimal import Decimal, ROUND_HALF_UP
+        from contabilidad.models import Cuenta, AsientoContable, MovimientoContable
+        from django.db import transaction as db_transaction
+
+        empresa = nomina.empresa
+        ZERO = Decimal('0')
+        TWO = Decimal('0.01')
+
+        try:
+            cuenta_banco = Cuenta.objects.get(empresa=empresa, codigo=cuenta_banco_codigo)
+        except Cuenta.DoesNotExist:
+            return Response({'error': f'Cuenta {cuenta_banco_codigo} no encontrada'}, status=400)
+
+        # Obtener liquidaciones con tercero
+        liquidaciones = nomina.liquidaciones.select_related('empleado__tercero').all()
+        if not liquidaciones.exists():
+            return Response({'error': 'No hay liquidaciones'}, status=400)
+
+        MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+        concepto = f"Pago nómina {MESES[nomina.mes]} {nomina.anio} — {nomina.get_tipo_display()}"
+
+        # Tercero principal: empresa
+        from terceros.models import Tercero
+        tercero_empresa = Tercero.objects.filter(numero_documento=empresa.nit).first()
+        if not tercero_empresa:
+            tercero_empresa = liquidaciones.first().empleado.tercero
+
+        try:
+            fecha_obj = date.fromisoformat(str(fecha_pago))
+        except (ValueError, TypeError):
+            fecha_obj = date.today()
+
+        with db_transaction.atomic():
+            asiento = AsientoContable.objects.create(
+                empresa=empresa,
+                fecha=fecha_obj,
+                tercero=tercero_empresa,
+                concepto=concepto,
+                descripcion=f"Pago automático — {concepto}",
+                tipo_comprobante='CE',
+                fiscal_year=fecha_obj.year,
+                fiscal_period=fecha_obj.month,
+            )
+
+            # Cuenta salarios por pagar
+            cuenta_salarios, _ = Cuenta.objects.get_or_create(
+                empresa=empresa, codigo='250505',
+                defaults={'nombre': 'Salarios por pagar', 'nivel': 6,
+                          'naturaleza': 'C', 'tipo': 'Auxiliar'}
+            )
+
+            total_pago = ZERO
+
+            # Débito: Salarios por pagar POR EMPLEADO con tercero
+            for liq in liquidaciones:
+                if liq.neto_pagar > ZERO:
+                    MovimientoContable.objects.create(
+                        asiento=asiento,
+                        cuenta=cuenta_salarios,
+                        tercero=liq.empleado.tercero,
+                        debito=liq.neto_pagar,
+                        credito=ZERO,
+                    )
+                    total_pago += liq.neto_pagar
+
+            # Crédito: Banco
+            MovimientoContable.objects.create(
+                asiento=asiento,
+                cuenta=cuenta_banco,
+                debito=ZERO,
+                credito=total_pago,
+            )
+
+            nomina.estado = 'pagada'
+            nomina.fecha_pago = fecha_obj
+            nomina.save()
+
+        data = NominaSerializer(nomina).data
+        data['asiento_pago'] = f"{asiento.tipo_comprobante}-{asiento.numero:04d}"
+        return Response(data)
 
 
 class LiquidacionEmpleadoViewSet(viewsets.ModelViewSet):

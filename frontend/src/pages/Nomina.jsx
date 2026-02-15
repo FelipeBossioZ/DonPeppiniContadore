@@ -1,5 +1,5 @@
 // 🎩 Don Peppini Contadore - Módulo de Nómina
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   Users, Plus, Edit2, Trash2, DollarSign, CheckCircle, Eye, X,
   ChevronDown, ChevronUp, Calculator, Briefcase, AlertCircle,
@@ -13,6 +13,7 @@ import {
   useParametrosNomina,
 } from "../hooks/useNomina";
 import { descargarComprobantePDF, importarEmpleados } from "../services/api";
+import api from "../services/api";
 import PILA from "./PILA";
 
 const MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -424,6 +425,30 @@ export default function Nomina() {
   const [newNomMes, setNewNomMes] = useState(new Date().getMonth() + 1);
   const [newNomTipo, setNewNomTipo] = useState("MEN");
   const [search, setSearch] = useState("");
+  const [cuentasBanco, setCuentasBanco] = useState([]);
+  const [showPagarModal, setShowPagarModal] = useState(null); // nominaId or null
+  const [cuentaBancoPago, setCuentaBancoPago] = useState("");
+
+  // Cargar cuentas de banco
+  useEffect(() => {
+    if (empresaId) {
+      api.get('/contabilidad/cuentas/', { params: { empresa: empresaId } }).then(res => {
+        const bancos = res.data.filter(c =>
+          (c.codigo.startsWith('1110') || c.codigo.startsWith('1105') || c.codigo.startsWith('1120'))
+          && c.codigo.length >= 6
+        );
+        // Deduplicar por código: priorizar cuenta de empresa sobre global
+        const seen = new Map();
+        bancos.forEach(c => {
+          const existing = seen.get(c.codigo);
+          if (!existing || (c.empresa && !existing.empresa)) seen.set(c.codigo, c);
+        });
+        const unicos = [...seen.values()];
+        setCuentasBanco(unicos);
+        if (unicos.length > 0) setCuentaBancoPago(unicos[0].codigo);
+      }).catch(() => {});
+    }
+  }, [empresaId]);
 
   // Empleados filtrados
   const empFiltrados = useMemo(() => {
@@ -460,8 +485,21 @@ export default function Nomina() {
   };
 
   const handlePagar = async (nominaId) => {
-    if (!confirm("¿Marcar esta nómina como pagada?")) return;
-    await pagarNom.mutateAsync(nominaId);
+    setShowPagarModal(nominaId);
+  };
+
+  const confirmarPago = async () => {
+    if (!cuentaBancoPago) { alert("Seleccione cuenta de banco"); return; }
+    try {
+      await pagarNom.mutateAsync({
+        id: showPagarModal,
+        cuenta_banco: cuentaBancoPago,
+        fecha_pago: new Date().toISOString().slice(0, 10),
+      });
+      setShowPagarModal(null);
+    } catch (err) {
+      alert("Error: " + (err.response?.data?.error || err.message));
+    }
   };
 
   const handleDeleteNomina = async (nominaId) => {
@@ -798,6 +836,40 @@ export default function Nomina() {
           liquidacion={showLiqDetail}
           onClose={() => setShowLiqDetail(null)}
         />
+      )}
+
+      {/* Modal Pagar Nómina */}
+      {showPagarModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6">
+            <h3 className="text-lg font-semibold mb-4">Pagar Nómina</h3>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de banco</label>
+            <select
+              className="w-full border rounded-lg px-3 py-2 mb-4"
+              value={cuentaBancoPago}
+              onChange={e => setCuentaBancoPago(e.target.value)}
+            >
+              {cuentasBanco.length === 0 && <option value="">No hay cuentas de banco</option>}
+              {cuentasBanco.map((c, idx) => (
+                <option key={c.id || `${c.codigo}-${idx}`} value={c.codigo}>
+                  {c.codigo} — {c.nombre}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mb-4">
+              Se generará un Comprobante de Egreso (CE) debitando Salarios por pagar y acreditando la cuenta seleccionada.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowPagarModal(null)}
+                className="flex-1 py-2 border rounded-lg hover:bg-gray-50">Cancelar</button>
+              <button onClick={confirmarPago}
+                disabled={!cuentaBancoPago || pagarNom.isPending}
+                className="flex-1 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
+                {pagarNom.isPending ? "Procesando..." : "Confirmar pago"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

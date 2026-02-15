@@ -2,94 +2,145 @@
 import React, { useState } from 'react';
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { 
-  Home, 
-  Users, 
-  BookOpen, 
-  FileText, 
-  LogOut, 
-  Menu, 
-  X,
-  ChevronRight,
-  BarChart3,
-  FileSpreadsheet,
-  Landmark,
-  TrendingUp,
-  Lock,
-  Briefcase,
-  Calculator,
-  UserMinus,
-  Gift,
-  Upload,
-  Shield,
-  CreditCard,
-  Bookmark,
+  Home, Users, BookOpen, FileText, LogOut, Menu, X,
+  ChevronRight, ChevronDown, BarChart3, FileSpreadsheet,
+  Landmark, TrendingUp, Lock, Briefcase, Calculator,
+  UserMinus, Gift, Upload, Shield, CreditCard, Bookmark,
+  Settings, Receipt,
 } from 'lucide-react';
 import { authService } from '../services/auth';
 import EmpresaSelector from './EmpresaSelector';
 import { useEmpresa } from '../context/EmpresaContext';
 
+// ─── Estructura del sidebar: 7 grupos ───
+const NAV_GROUPS = [
+  { type: 'link', name: 'Dashboard', href: '/dashboard', icon: Home },
+  { type: 'link', name: 'Terceros', href: '/terceros', icon: Users },
+  {
+    type: 'group', name: 'Contabilidad', icon: BookOpen,
+    children: [
+      { name: 'Asientos', href: '/contabilidad' },
+      { name: 'CxP / CxC', href: '/cxp-cxc' },
+      { name: 'Plantillas', href: '/plantillas' },
+      { name: 'Importar DIAN', href: '/importar-dian' },
+    ],
+  },
+  {
+    type: 'group', name: 'Nómina', icon: Briefcase,
+    children: [
+      { name: 'Nóminas', href: '/nomina' },
+      { name: 'Liquidación Contrato', href: '/liquidacion-contrato' },
+      { name: 'Prestaciones', href: '/prestaciones' },
+      { name: 'Simulador Retención', href: '/simulador-retencion' },
+    ],
+  },
+  {
+    type: 'group', name: 'Reportes', icon: BarChart3,
+    children: [
+      { name: 'Libros Contables', href: '/reportes' },
+      { name: 'Balance Terceros', href: '/balance-terceros' },
+      { name: 'Estados Financieros', href: '/estados-financieros' },
+      { name: 'Indicadores', href: '/indicadores' },
+      { name: 'Notas EEFF', href: '/notas-eeff' },
+      { name: 'Medios Magnéticos', href: '/medios-magneticos' },
+      { name: 'Certificados', href: '/certificados' },
+    ],
+  },
+  {
+    type: 'group', name: 'Operaciones', icon: Receipt,
+    children: [
+      { name: 'Facturación', href: '/facturacion' },
+      { name: 'Conciliación Bancaria', href: '/conciliacion-bancaria' },
+    ],
+  },
+  {
+    type: 'group', name: 'Administración', icon: Settings,
+    children: [
+      { name: 'Cierre Contable', href: '/cierre-contable' },
+      { name: 'Auditoría Interna', href: '/auditoria' },
+    ],
+  },
+];
+
 const Layout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNuevaEmpresa, setShowNuevaEmpresa] = useState(false);
+  const [openGroups, setOpenGroups] = useState({});
   const navigate = useNavigate();
   const location = useLocation();
   const { empresaActual } = useEmpresa();
 
-  const handleLogout = () => {
-    authService.logout();
-    navigate('/login');
-  };
-
-  const navigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: Home },
-    { name: 'Terceros', href: '/terceros', icon: Users },
-    { name: 'Contabilidad', href: '/contabilidad', icon: BookOpen },
-    { name: 'CxP / CxC', href: '/cxp-cxc', icon: CreditCard },
-    { name: 'Plantillas', href: '/plantillas', icon: Bookmark },
-    { name: 'Facturación', href: '/facturacion', icon: FileText },
-    { name: 'Importar DIAN', href: '/importar-dian', icon: Upload },
-    { name: 'Nómina', href: '/nomina', icon: Briefcase },
-    { name: 'Simulador Retención', href: '/simulador-retencion', icon: Calculator },
-    { name: 'Liquidación Contrato', href: '/liquidacion-contrato', icon: UserMinus },
-    { name: 'Prestaciones', href: '/prestaciones', icon: Gift },
-    { name: 'Balance Terceros', href: '/balance-terceros', icon: Users },
-    { name: 'Reportes', href: '/reportes', icon: BarChart3 },
-    { name: 'Estados Financieros', href: '/estados-financieros', icon: FileText },
-    { name: 'Medios Magnéticos', href: '/medios-magneticos', icon: FileSpreadsheet },
-    { name: 'Certificados', href: '/certificados', icon: FileText },
-    { name: 'Conciliación Bancaria', href: '/conciliacion-bancaria', icon: Landmark },
-    { name: 'Notas EEFF', href: '/notas-eeff', icon: BookOpen },
-    { name: 'Indicadores', href: '/indicadores', icon: TrendingUp },
-    { name: 'Cierre Contable', href: '/cierre-contable', icon: Lock },
-    { name: 'Auditoría Interna', href: '/auditoria', icon: Shield },
-  ];
-
+  const handleLogout = () => { authService.logout(); navigate('/login'); };
   const isActive = (path) => location.pathname === path;
+  const isGroupActive = (g) => g.children?.some((c) => location.pathname === c.href);
+  const toggleGroup = (name) => setOpenGroups((p) => ({ ...p, [name]: !p[name] }));
+  const isGroupOpen = (g) => openGroups[g.name] !== undefined ? openGroups[g.name] : isGroupActive(g);
 
-  // Logo Don Peppini
   const Logo = ({ size = 'normal' }) => (
     <div className="flex items-center">
       <span className={`${size === 'small' ? 'text-xl' : 'text-2xl'}`}>🎩</span>
       <div className="ml-2">
-        <span className={`font-bold text-gray-800 ${size === 'small' ? 'text-sm' : 'text-base'}`}>
-          Don Peppini
-        </span>
-        <span className={`block text-indigo-600 font-medium ${size === 'small' ? 'text-xs' : 'text-xs'}`}>
-          Contadore
-        </span>
+        <span className={`font-bold text-gray-800 ${size === 'small' ? 'text-sm' : 'text-base'}`}>Don Peppini</span>
+        <span className={`block text-indigo-600 font-medium text-xs`}>Contadore</span>
       </div>
     </div>
   );
 
-  
+  const NavItem = ({ item, onNav }) => {
+    if (item.type === 'link') {
+      return (
+        <Link to={item.href} onClick={onNav}
+          className={`flex items-center px-3 py-2 mb-0.5 text-sm font-medium rounded-lg transition-colors ${
+            isActive(item.href) ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-100'
+          }`}>
+          <item.icon className="mr-3 h-5 w-5 shrink-0" />
+          {item.name}
+        </Link>
+      );
+    }
+    const open = isGroupOpen(item);
+    const active = isGroupActive(item);
+    return (
+      <div className="mb-0.5">
+        <button onClick={() => toggleGroup(item.name)}
+          className={`flex items-center w-full px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+            active ? 'bg-indigo-50/60 text-indigo-700' : 'text-gray-700 hover:bg-gray-100'
+          }`}>
+          <item.icon className="mr-3 h-5 w-5 shrink-0" />
+          <span className="flex-1 text-left">{item.name}</span>
+          {open
+            ? <ChevronDown className="h-4 w-4 text-gray-400" />
+            : <ChevronRight className="h-4 w-4 text-gray-400" />}
+        </button>
+        {open && (
+          <div className="ml-5 pl-3 border-l border-gray-200 mt-0.5 mb-1">
+            {item.children.map((child) => (
+              <Link key={child.href} to={child.href} onClick={onNav}
+                className={`block px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  isActive(child.href)
+                    ? 'text-indigo-700 font-medium bg-indigo-50'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-800'
+                }`}>
+                {child.name}
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const SidebarNav = ({ onNav }) => (
+    <nav className="flex-1 px-3 py-4 overflow-y-auto">
+      {NAV_GROUPS.map((item) => <NavItem key={item.name} item={item} onNav={onNav} />)}
+    </nav>
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Overlay para móvil */}
       {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-gray-600 bg-opacity-75 z-20 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 z-20 lg:hidden"
+          onClick={() => setSidebarOpen(false)} />
       )}
 
       {/* Sidebar móvil */}
@@ -98,46 +149,19 @@ const Layout = () => {
       }`}>
         <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200">
           <Logo size="small" />
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100"
-          >
+          <button onClick={() => setSidebarOpen(false)}
+            className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100">
             <X className="h-6 w-6" />
           </button>
         </div>
-        
-        {/* Selector de empresa móvil */}
         <div className="px-3 py-3 border-b border-gray-100">
           <EmpresaSelector onNuevaEmpresa={() => setShowNuevaEmpresa(true)} />
         </div>
-        
-        <nav className="px-3 py-4">
-          {navigation.map((item) => (
-            <Link
-              key={item.name}
-              to={item.href}
-              onClick={() => setSidebarOpen(false)}
-              className={`flex items-center px-3 py-2 mb-1 text-sm font-medium rounded-lg transition-colors ${
-                isActive(item.href)
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
-            >
-              <item.icon className="mr-3 h-5 w-5" />
-              {item.name}
-              {isActive(item.href) && (
-                <ChevronRight className="ml-auto h-4 w-4" />
-              )}
-            </Link>
-          ))}
-        </nav>
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200">
-          <button
-            onClick={handleLogout}
-            className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
-          >
-            <LogOut className="mr-3 h-5 w-5" />
-            Cerrar sesión
+        <SidebarNav onNav={() => setSidebarOpen(false)} />
+        <div className="p-4 border-t border-gray-200">
+          <button onClick={handleLogout}
+            className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
+            <LogOut className="mr-3 h-5 w-5" />Cerrar sesión
           </button>
         </div>
       </div>
@@ -145,41 +169,15 @@ const Layout = () => {
       {/* Sidebar desktop */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-10 lg:w-64 lg:block">
         <div className="flex flex-col h-full bg-white border-r border-gray-200">
-          <div className="flex items-center h-16 px-4 border-b border-gray-200">
-            <Logo />
-          </div>
-          
-          {/* Selector de empresa desktop */}
+          <div className="flex items-center h-16 px-4 border-b border-gray-200"><Logo /></div>
           <div className="px-3 py-3 border-b border-gray-100">
             <EmpresaSelector onNuevaEmpresa={() => setShowNuevaEmpresa(true)} />
           </div>
-          
-          <nav className="flex-1 px-3 py-4 overflow-y-auto">
-            {navigation.map((item) => (
-              <Link
-                key={item.name}
-                to={item.href}
-                className={`flex items-center px-3 py-2 mb-1 text-sm font-medium rounded-lg transition-colors ${
-                  isActive(item.href)
-                    ? 'bg-indigo-50 text-indigo-700'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                <item.icon className="mr-3 h-5 w-5" />
-                {item.name}
-                {isActive(item.href) && (
-                  <ChevronRight className="ml-auto h-4 w-4" />
-                )}
-              </Link>
-            ))}
-          </nav>
+          <SidebarNav onNav={() => {}} />
           <div className="p-4 border-t border-gray-200">
-            <button
-              onClick={handleLogout}
-              className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              <LogOut className="mr-3 h-5 w-5" />
-              Cerrar sesión
+            <button onClick={handleLogout}
+              className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
+              <LogOut className="mr-3 h-5 w-5" />Cerrar sesión
             </button>
           </div>
         </div>
@@ -187,19 +185,14 @@ const Layout = () => {
 
       {/* Contenido principal */}
       <div className="lg:pl-64">
-        {/* Header móvil */}
         <div className="sticky top-0 z-10 flex items-center justify-between h-16 px-4 bg-white border-b border-gray-200 lg:hidden">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100"
-          >
+          <button onClick={() => setSidebarOpen(true)}
+            className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100">
             <Menu className="h-6 w-6" />
           </button>
           <Logo size="small" />
-          <div className="w-10"></div> {/* Spacer para centrar el logo */}
+          <div className="w-10"></div>
         </div>
-
-        {/* Header desktop con info de empresa */}
         <div className="hidden lg:flex items-center justify-between h-12 px-6 bg-white border-b border-gray-100">
           <div className="text-sm text-gray-500">
             {empresaActual ? (
@@ -214,18 +207,12 @@ const Layout = () => {
               <span className="text-amber-600">⚠️ Seleccione una empresa</span>
             )}
           </div>
-          <div className="text-xs text-gray-400">
-            Periodo: {new Date().getFullYear()}
-          </div>
+          <div className="text-xs text-gray-400">Periodo: {new Date().getFullYear()}</div>
         </div>
-
-        {/* Área de contenido */}
-        <main className="min-h-[calc(100vh-4rem)] lg:min-h-[calc(100vh-3rem)]">
-          <Outlet />
-        </main>
+        <main className="min-h-[calc(100vh-4rem)] lg:min-h-[calc(100vh-3rem)]"><Outlet /></main>
       </div>
 
-       {/* Modal Nueva Empresa */}
+      {/* Modal Nueva Empresa */}
       {showNuevaEmpresa && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
@@ -249,15 +236,9 @@ const Layout = () => {
                     email: formData.get('email') || '',
                   })
                 });
-                if (response.ok) {
-                  setShowNuevaEmpresa(false);
-                  window.location.reload();
-                } else {
-                  alert('Error al crear empresa');
-                }
-              } catch (err) {
-                alert('Error de conexión');
-              }
+                if (response.ok) { setShowNuevaEmpresa(false); window.location.reload(); }
+                else { alert('Error al crear empresa'); }
+              } catch (err) { alert('Error de conexión'); }
             }}>
               <div className="space-y-4">
                 <div>
@@ -278,18 +259,13 @@ const Layout = () => {
                 </div>
               </div>
               <div className="flex gap-3 mt-6">
-                <button type="button" onClick={() => setShowNuevaEmpresa(false)} className="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
-                  Cancelar
-                </button>
-                <button type="submit" className="flex-1 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
-                  Crear Empresa
-                </button>
+                <button type="button" onClick={() => setShowNuevaEmpresa(false)} className="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Crear Empresa</button>
               </div>
             </form>
           </div>
         </div>
-      )}     
-
+      )}
     </div>
   );
 };
