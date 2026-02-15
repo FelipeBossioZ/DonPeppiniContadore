@@ -319,8 +319,8 @@ export async function liquidarNomina({ id, novedades }) {
   return data;
 }
 
-export async function pagarNomina(id) {
-  const { data } = await instance.post(`/nomina/nominas/${id}/pagar/`);
+export async function pagarNomina({ id, cuenta_banco, fecha_pago }) {
+  const { data } = await instance.post(`/nomina/nominas/${id}/pagar/`, { cuenta_banco, fecha_pago });
   return data;
 }
 
