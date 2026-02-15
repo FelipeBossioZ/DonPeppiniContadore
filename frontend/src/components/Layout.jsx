@@ -1,5 +1,5 @@
 // 🎩 Don Peppini Contadore - Layout Principal
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Home, Users, BookOpen, FileText, LogOut, Menu, X,
@@ -43,14 +43,14 @@ const NAV_GROUPS = [
       { name: 'Indicadores', href: '/indicadores' },
       { name: 'Notas EEFF', href: '/notas-eeff' },
       { name: 'Medios Magnéticos', href: '/medios-magneticos' },
-      { name: 'Certificados', href: '/certificados' },
+      { name: 'Certificados', href: '/certificados', wip: true },
     ],
   },
   {
     type: 'group', name: 'Operaciones', icon: Receipt,
     children: [
-      { name: 'Facturación', href: '/facturacion' },
-      { name: 'Conciliación Bancaria', href: '/conciliacion-bancaria' },
+      { name: 'Facturación', href: '/facturacion', wip: true },
+      { name: 'Conciliación Bancaria', href: '/conciliacion-bancaria', wip: true },
     ],
   },
   {
@@ -69,6 +69,18 @@ const Layout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { empresaActual } = useEmpresa();
+
+  // User info + role
+  const [userInfo, setUserInfo] = useState(() => authService.getUser());
+  const userRole = userInfo?.role || 'consulta';
+  const ROLE_LABEL = { admin: 'Administrador', contador: 'Contador', consulta: 'Consulta' };
+  const ROLE_COLOR = { admin: 'bg-red-100 text-red-700', contador: 'bg-indigo-100 text-indigo-700', consulta: 'bg-gray-100 text-gray-600' };
+
+  useEffect(() => {
+    if (!userInfo && authService.isAuthenticated()) {
+      authService.fetchMe().then(u => { if (u) setUserInfo(u); });
+    }
+  }, []);
 
   const handleLogout = () => { authService.logout(); navigate('/login'); };
   const isActive = (path) => location.pathname === path;
@@ -116,12 +128,13 @@ const Layout = () => {
           <div className="ml-5 pl-3 border-l border-gray-200 mt-0.5 mb-1">
             {item.children.map((child) => (
               <Link key={child.href} to={child.href} onClick={onNav}
-                className={`block px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                className={`flex items-center justify-between px-3 py-1.5 text-sm rounded-lg transition-colors ${
                   isActive(child.href)
                     ? 'text-indigo-700 font-medium bg-indigo-50'
                     : 'text-gray-600 hover:bg-gray-100 hover:text-gray-800'
                 }`}>
                 {child.name}
+                {child.wip && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium leading-none">WIP</span>}
               </Link>
             ))}
           </div>
@@ -159,6 +172,12 @@ const Layout = () => {
         </div>
         <SidebarNav onNav={() => setSidebarOpen(false)} />
         <div className="p-4 border-t border-gray-200">
+          {userInfo && (
+            <div className="flex items-center justify-between mb-2 px-3">
+              <span className="text-sm text-gray-700 font-medium truncate">{userInfo.username}</span>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLOR[userRole]}`}>{ROLE_LABEL[userRole]}</span>
+            </div>
+          )}
           <button onClick={handleLogout}
             className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
             <LogOut className="mr-3 h-5 w-5" />Cerrar sesión
@@ -175,6 +194,12 @@ const Layout = () => {
           </div>
           <SidebarNav onNav={() => {}} />
           <div className="p-4 border-t border-gray-200">
+            {userInfo && (
+              <div className="flex items-center justify-between mb-2 px-3">
+                <span className="text-sm text-gray-700 font-medium truncate">{userInfo.username}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLOR[userRole]}`}>{ROLE_LABEL[userRole]}</span>
+              </div>
+            )}
             <button onClick={handleLogout}
               className="flex items-center w-full px-3 py-2 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-100 transition-colors">
               <LogOut className="mr-3 h-5 w-5" />Cerrar sesión

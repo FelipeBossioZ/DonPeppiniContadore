@@ -21,12 +21,44 @@ export const authService = {
     const data = await response.json();
     localStorage.setItem('access_token', data.access);
     localStorage.setItem('refresh_token', data.refresh);
-    return data;
+
+    // Obtener info del usuario (incluyendo rol)
+    const user = await this.fetchMe();
+    return { ...data, user };
+  },
+
+  async fetchMe() {
+    const token = this.getToken();
+    if (!token) return null;
+    try {
+      const resp = await fetch(`${API_URL}/api/me/`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!resp.ok) return null;
+      const user = await resp.json();
+      localStorage.setItem('user_info', JSON.stringify(user));
+      return user;
+    } catch {
+      return null;
+    }
+  },
+
+  getUser() {
+    try {
+      const raw = localStorage.getItem('user_info');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  },
+
+  getRole() {
+    const user = this.getUser();
+    return user?.role || 'consulta';
   },
 
   logout() {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
+    localStorage.removeItem('user_info');
   },
 
   isAuthenticated() {

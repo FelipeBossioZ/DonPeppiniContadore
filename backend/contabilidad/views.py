@@ -14,6 +14,7 @@ from django.utils import timezone
 from datetime import date
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from pyme_contable_backend.permissions import IsAdmin, IsContadorOrAbove, IsReadOnly, get_user_role
 from rest_framework import status
 
 from openpyxl import Workbook
@@ -91,13 +92,20 @@ class CuentaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para gestión del Plan de Cuentas.
     Permite listar, crear, editar y desactivar cuentas.
+    Filtra por empresa obligatoriamente.
     """
-    permission_classes = [IsAuthenticated]
-    queryset = Cuenta.objects.select_related("padre", "empresa").all().order_by("codigo")
+    permission_classes = [IsAuthenticated, IsReadOnly]
     serializer_class = CuentaSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = ["codigo", "nombre"]
     pagination_class = None
+
+    def get_queryset(self):
+        qs = Cuenta.objects.select_related("padre", "empresa").order_by("codigo")
+        empresa_id = self.request.query_params.get('empresa')
+        if empresa_id:
+            qs = qs.filter(empresa_id=empresa_id)
+        return qs
 
 class AsientoContableViewSet(viewsets.ModelViewSet):
     """
@@ -107,7 +115,7 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
     La actualización y eliminación se deshabilitan por seguridad contable,
     ya que los asientos no deben modificarse (se deben crear asientos de ajuste).
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsReadOnly]
     queryset = AsientoContable.objects.select_related("tercero").prefetch_related("movimientos", "movimientos__tercero", "movimientos__cuenta").all()
     serializer_class = AsientoContableSerializer
     http_method_names = ['get', 'post', 'head', 'options']  # Deshabilitar PUT, PATCH, DELETE
@@ -181,6 +189,10 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="anular")
     def anular(self, request, pk=None):
+        # Solo admin puede anular asientos
+        if get_user_role(request.user) != 'admin':
+            return Response({"detail": "Solo un administrador puede anular asientos."}, status=403)
+
         asiento = self.get_object()
         if asiento.estado == "anulado":
             return Response({"detail": "El asiento ya está anulado."}, status=400)
@@ -909,9 +921,9 @@ class BalanceGeneralView(views.APIView):
             }
         })
 
-class MediosMagneticosView(views.APIView):
+class _MediosMagneticosView_DEPRECATED_v1(views.APIView):
     """
-    Vista para generar reportes de Medios Magnéticos (Exógena) para la DIAN.
+    ⚠️ DEPRECATED: Movido a contabilidad/medios_magneticos.py
     """
     
 
@@ -2172,9 +2184,9 @@ class EstadoFlujosEfectivoView(views.APIView):
             'variaciones': tabla_variaciones,
         })
 
-class MediosMagneticosView(views.APIView):
+class _MediosMagneticosView_DEPRECATED_v2(views.APIView):
     """
-    🎩 Generación de Medios Magnéticos DIAN
+    ⚠️ DEPRECATED: Movido a contabilidad/medios_magneticos.py
     GET /api/contabilidad/medios-magneticos/?empresa=1&year=2025
     """
     permission_classes = [IsAuthenticated]
@@ -5938,7 +5950,7 @@ class EjecutarCierreView(views.APIView):
     POST /api/contabilidad/cierres/ejecutar/
     Body: { empresa, tipo, año, mes?, notas? }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdmin]
     
     def post(self, request):
         empresa_id = request.data.get('empresa')
@@ -6170,7 +6182,7 @@ class TrasladoResultadosView(views.APIView):
     POST /api/contabilidad/cierres/trasladar-resultados/
     Body: { empresa, año }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request):
         empresa_id = request.data.get('empresa')
@@ -6290,7 +6302,7 @@ class ReabrirPeriodoView(views.APIView):
     POST /api/contabilidad/cierres/reabrir/
     Body: { cierre_id, motivo }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdmin]
     
     def post(self, request):
         cierre_id = request.data.get('cierre_id')
@@ -7673,7 +7685,7 @@ class PlantillaCrearView(views.APIView):
 
 class PlantillaEliminarView(views.APIView):
     """Eliminar plantilla."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsContadorOrAbove]
 
     def delete(self, request, pk):
         from .models import PlantillaAsiento

@@ -7,6 +7,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from pyme_contable_backend.permissions import IsReadOnly, IsContadorOrAbove
 from rest_framework.views import APIView
 from .models import ParametrosNomina, Empleado, Nomina, LiquidacionEmpleado, DetalleHorasExtras, LiquidacionContrato
 from empresas.models import Empresa
@@ -114,6 +115,11 @@ class NominaViewSet(viewsets.ModelViewSet):
         }
         """
         nomina = self.get_object()
+        # Solo contador+ puede liquidar nómina
+        from pyme_contable_backend.permissions import get_user_role
+        if get_user_role(request.user) not in ('admin', 'contador'):
+            return Response({"detail": "Se requiere rol de contador o administrador."}, status=status.HTTP_403_FORBIDDEN)
+
         if nomina.estado not in ('borrador', 'liquidada'):
             return Response(
                 {"detail": "Solo se pueden liquidar nóminas en estado borrador o liquidada."},
@@ -187,6 +193,11 @@ class NominaViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def pagar(self, request, pk=None):
         """Marca la nómina como pagada y genera asiento de pago (CE)."""
+        # Solo contador+ puede pagar nómina
+        from pyme_contable_backend.permissions import get_user_role
+        if get_user_role(request.user) not in ('admin', 'contador'):
+            return Response({"detail": "Se requiere rol de contador o administrador."}, status=status.HTTP_403_FORBIDDEN)
+
         nomina = self.get_object()
         if nomina.estado != 'liquidada':
             return Response(

@@ -20,7 +20,7 @@ from .views import (
     EstadoCambiosPatrimonioView,
     EstadoFlujosEfectivoView,
     # Medios Magnéticos
-    MediosMagneticosView,
+    # MediosMagneticosView → movido a medios_magneticos.py (import abajo)
     CertificadosTributariosView,
     ListaTercerosParaCertificadoView,
     #Conciliacion Bancaria
@@ -73,6 +73,7 @@ from .views import (
     ProgramadoToggleView,
     GenerarBorradoresView,
 )
+from .medios_magneticos import MediosMagneticosView
 
 router = DefaultRouter()
 router.register(r'cuentas', CuentaViewSet, basename='cuenta')

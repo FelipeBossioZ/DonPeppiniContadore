@@ -36,11 +36,8 @@ export default function PILA() {
           (c.codigo.startsWith('1110') || c.codigo.startsWith('1105') || c.codigo.startsWith('1120'))
           && c.codigo.length >= 6
         );
-        const seen = new Map();
-        bancos.forEach(c => { const ex = seen.get(c.codigo); if (!ex || (c.empresa && !ex.empresa)) seen.set(c.codigo, c); });
-        const unicos = [...seen.values()];
-        setCuentasBanco(unicos);
-        if (unicos.length > 0) setCuentaBanco(unicos[0].codigo);
+        setCuentasBanco(bancos);
+        if (bancos.length > 0) setCuentaBanco(bancos[0].codigo);
       });
     }
   }, [empresaId]);

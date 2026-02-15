@@ -437,15 +437,8 @@ export default function Nomina() {
           (c.codigo.startsWith('1110') || c.codigo.startsWith('1105') || c.codigo.startsWith('1120'))
           && c.codigo.length >= 6
         );
-        // Deduplicar por código: priorizar cuenta de empresa sobre global
-        const seen = new Map();
-        bancos.forEach(c => {
-          const existing = seen.get(c.codigo);
-          if (!existing || (c.empresa && !existing.empresa)) seen.set(c.codigo, c);
-        });
-        const unicos = [...seen.values()];
-        setCuentasBanco(unicos);
-        if (unicos.length > 0) setCuentaBancoPago(unicos[0].codigo);
+        setCuentasBanco(bancos);
+        if (bancos.length > 0) setCuentaBancoPago(bancos[0].codigo);
       }).catch(() => {});
     }
   }, [empresaId]);

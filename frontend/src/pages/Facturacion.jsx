@@ -134,6 +134,14 @@ export default function Facturacion() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Banner en construcción */}
+      <div className="mb-4 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+        <span className="text-2xl">🚧</span>
+        <div>
+          <p className="text-sm font-semibold text-amber-800">Módulo en construcción</p>
+          <p className="text-xs text-amber-600">Facturación electrónica DIAN, notas crédito/débito, resolución de numeración, integración con terceros y contabilidad.</p>
+        </div>
+      </div>
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>

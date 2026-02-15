@@ -133,6 +133,14 @@ export default function CertificadosTributarios() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      {/* Banner en construcción */}
+      <div className="mb-4 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+        <span className="text-2xl">🚧</span>
+        <div>
+          <p className="text-sm font-semibold text-amber-800">Módulo en construcción</p>
+          <p className="text-xs text-amber-600">Certificado de retención en la fuente (220), certificado de IVA, certificado de ingresos y retenciones (formato 2276), PDF descargable.</p>
+        </div>
+      </div>
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
