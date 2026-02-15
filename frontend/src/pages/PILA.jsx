@@ -294,8 +294,8 @@ export default function PILA() {
                 <select value={cuentaBanco} onChange={e => setCuentaBanco(e.target.value)}
                   className="border rounded-lg px-3 py-2 w-full mt-1">
                   {cuentasBanco.length === 0 && <option value="">Sin cuentas de banco/caja</option>}
-                  {cuentasBanco.map(c => (
-                    <option key={c.codigo} value={c.codigo}>{c.codigo} — {c.nombre}</option>
+                  {cuentasBanco.map((c, idx) => (
+                    <option key={`${c.codigo}-${idx}`} value={c.codigo}>{c.codigo} — {c.nombre}</option>
                   ))}
                 </select>
               </div>

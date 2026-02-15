@@ -59,7 +59,7 @@ ZERO = Decimal('0')
 def _asegurar_cuenta(empresa, codigo, nombre):
     """
     Obtiene o crea la Cuenta contable para la empresa.
-    Determina automáticamente naturaleza y tipo según el código.
+    Si ya existe pero tiene nombre genérico, lo actualiza.
     """
     cuenta, created = Cuenta.objects.get_or_create(
         empresa=empresa,
@@ -72,6 +72,13 @@ def _asegurar_cuenta(empresa, codigo, nombre):
             'activa': True,
         }
     )
+    # Si ya existía con nombre genérico/incorrecto, actualizar
+    if not created and cuenta.nombre != nombre:
+        nombres_genericos = ['Fondos', 'Embargos judiciales', 'Aportes al FIC',
+                             'Aportes al ICBF, SENA y cajas de compensación']
+        if cuenta.nombre in nombres_genericos or len(cuenta.nombre) < 5:
+            cuenta.nombre = nombre
+            cuenta.save(update_fields=['nombre'])
     return cuenta
 
 
@@ -233,25 +240,34 @@ def contabilizar_nomina(nomina):
     # Ajuste de centavos por redondeo (si existe)
     if diff != ZERO:
         if diff > ZERO:
-            # Agregar crédito de ajuste
             _agregar_linea(lineas, *C['salarios_por_pagar'], abs(diff), 'credito')
         else:
             _agregar_linea(lineas, *C['gasto_sueldos'], abs(diff), 'debito')
 
-    # ── Necesitamos un tercero para el asiento — usar la empresa como tercero ──
+    # ── Tercero principal: la empresa ──
     from terceros.models import Tercero
     tercero_empresa = Tercero.objects.filter(
         numero_documento=empresa.nit
     ).first()
 
-    # Si no existe, buscar cualquier tercero (el asiento requiere tercero)
     if not tercero_empresa:
-        # Obtener el primer empleado de la nómina como tercero del asiento
         primer_emp = liquidaciones.first().empleado.tercero if liquidaciones.exists() else None
         tercero_empresa = primer_emp or Tercero.objects.first()
 
     if not tercero_empresa:
         raise ValueError("No se encontró un tercero para asociar al asiento contable.")
+
+    # ── Crear líneas de salarios por pagar POR EMPLEADO (con tercero individual) ──
+    lineas_individuales = []
+    for liq in liquidaciones:
+        if liq.neto_pagar > ZERO:
+            lineas_individuales.append({
+                'codigo': C['salarios_por_pagar'][0],
+                'nombre': C['salarios_por_pagar'][1],
+                'debito': ZERO,
+                'credito': liq.neto_pagar,
+                'tercero': liq.empleado.tercero,
+            })
 
     # ── Crear el asiento ──
     with transaction.atomic():
@@ -274,11 +290,17 @@ def contabilizar_nomina(nomina):
             tercero=tercero_empresa,
             concepto=concepto,
             descripcion=f"Contabilización automática — {concepto}",
+            tipo_comprobante='NM',
+            fiscal_year=fecha.year,
+            fiscal_period=fecha.month,
         )
 
-        # Consolidar líneas con misma cuenta (EPS y pensión tienen parte empleado + empleador)
+        # Consolidar líneas por cuenta+lado (excepto salarios_por_pagar que van individuales)
         consolidado = {}
         for linea in lineas:
+            # Salarios por pagar se maneja aparte (por empleado)
+            if linea['codigo'] == C['salarios_por_pagar'][0] and linea['credito'] > ZERO:
+                continue  # se crea individual abajo
             key = (linea['codigo'], 'D' if linea['debito'] > ZERO else 'C')
             if key in consolidado:
                 consolidado[key]['debito'] += linea['debito']
@@ -286,12 +308,23 @@ def contabilizar_nomina(nomina):
             else:
                 consolidado[key] = {**linea}
 
-        # Crear movimientos
+        # Crear movimientos consolidados (gastos + aportes)
         for linea in consolidado.values():
             cuenta = _asegurar_cuenta(empresa, linea['codigo'], linea['nombre'])
             MovimientoContable.objects.create(
                 asiento=asiento,
                 cuenta=cuenta,
+                debito=linea['debito'],
+                credito=linea['credito'],
+            )
+
+        # Crear movimientos individuales (salarios por pagar por empleado)
+        for linea in lineas_individuales:
+            cuenta = _asegurar_cuenta(empresa, linea['codigo'], linea['nombre'])
+            MovimientoContable.objects.create(
+                asiento=asiento,
+                cuenta=cuenta,
+                tercero=linea['tercero'],
                 debito=linea['debito'],
                 credito=linea['credito'],
             )

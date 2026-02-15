@@ -702,16 +702,6 @@ export default function Contabilidad() {
       {/* ====== MODAL: Nuevo Asiento ====== */}
       <Modal open={openForm} onClose={() => setOpenForm(false)} title="Nuevo asiento contable" footer={null} wide>
         <form onSubmit={onSubmitAsiento} className="grid grid-cols-1 gap-4">
-          {/* Cargar plantilla */}
-          <PlantillaLoader empresaId={empresaId} onLoad={(p) => {
-            setForm(f => ({ ...f, tipo_comprobante: p.tipo_comprobante, concepto: p.concepto }));
-            setMovRows(p.lineas.map(l => ({
-              cuenta: l.cuenta_codigo,
-              tercero_id: l.tercero_id || '',
-              debito: l.tipo === 'debito' ? l.monto : 0,
-              credito: l.tipo === 'credito' ? l.monto : 0,
-            })));
-          }} />
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {/* Tipo de Comprobante */}
             <div>
@@ -840,6 +830,11 @@ export default function Contabilidad() {
                             title="Crear nueva cuenta"
                           >+</button>
                         </div>
+                        {codigoValido && (
+                          <div className="text-xs text-gray-500 mt-0.5 truncate" title={cuentas.find(c => String(c.codigo) === String(r.cuenta))?.nombre}>
+                            {cuentas.find(c => String(c.codigo) === String(r.cuenta))?.nombre}
+                          </div>
+                        )}
                         {rowErrors[i]?.code && (
                           <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mt-1">
                             {rowErrors[i].code}
