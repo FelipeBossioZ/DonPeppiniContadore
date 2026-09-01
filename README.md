@@ -1,4 +1,4 @@
-# Don Peppini Contadore
+﻿# Don Peppini Contadore
 
 Sistema contable NIIF para Pymes en Colombia. Backend (Django) + Frontend (React/Vite).
 

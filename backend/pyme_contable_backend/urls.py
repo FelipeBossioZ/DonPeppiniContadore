@@ -1,4 +1,4 @@
-# 🎩 Don Peppini Contadore - URLs principales
+﻿# 🎩 Don Peppini Contadore - URLs principales
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework import permissions
@@ -9,6 +9,7 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
 from pyme_contable_backend.permissions import get_user_role
+from pyme_contable_backend import views_setup
 from rest_framework.decorators import api_view, permission_classes as perm_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -59,6 +60,8 @@ urlpatterns = [
     # Autenticación JWT
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/setup-status/', views_setup.setup_status, name='setup-status'),
+    path('api/setup-user/', views_setup.setup_user, name='setup-user'),
     path('api/me/', me_view, name='me'),
 
     # Documentación
