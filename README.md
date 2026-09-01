@@ -35,7 +35,7 @@ cd DonPeppiniContadore
 4. Ejecuta **`INSTALAR_DonPeppini.bat`** (doble clic o desde la terminal)
 5. Al terminar, ejecuta **`INICIAR_DonPeppini.bat`**
 6. Se abre el navegador en `http://localhost:5173`
-7. El primer acceso te pide crear tu usuario administrador
+7. El primer acceso muestra un formulario donde creas tu usuario, registras tu empresa y se carga el PUC automaticamente
 
 ### Opcion B: Descargar ZIP
 
@@ -48,7 +48,7 @@ Si prefieres no usar Git:
 5. Ejecuta **`INSTALAR_DonPeppini.bat`** (doble clic)
 6. Al terminar, ejecuta **`INICIAR_DonPeppini.bat`**
 7. Se abre el navegador en `http://localhost:5173`
-8. El primer acceso te pide crear tu usuario administrador
+8. El primer acceso muestra un formulario donde creas tu usuario, registras tu empresa y se carga el PUC automaticamente
 
 > **Nota:** Si descargaste por ZIP y despues quieres recibir actualizaciones por Git, sigue los pasos de ["Enlazar carpeta a Git"](#enlazar-carpeta-a-git).
 
@@ -58,15 +58,14 @@ Si prefieres no usar Git:
 
 1. Ejecuta `INSTALAR_DonPeppini.bat`
 2. Ejecuta `INICIAR_DonPeppini.bat`
-3. Abre http://localhost:5173 y crea tu usuario desde el formulario que aparece
-4. El usuario se crea automaticamente como administrador
-5. Entra al sistema y crea una empresa
-6. Carga el PUC: abre CMD en la carpeta `backend` y ejecuta:
+3. Abre http://localhost:5173
+4. El sistema detecta que es la primera vez y muestra un formulario con dos secciones:
+   - **Cuenta de Administrador:** usuario, correo (opcional) y contrasena
+   - **Datos de la Empresa:** NIT (sin DV), digito de verificacion, razon social y nombre comercial
+5. Al enviar, el sistema crea todo automaticamente: usuario admin, roles, empresa y PUC colombiano
+6. Listo. Ya puedes empezar a trabajar.
 
-```
-.venv\Scripts\activate
-python manage.py cargar_puc
-```
+> **Importante:** Despues de crear la empresa, si hay actualizaciones en el repositorio, ejecute `ACTUALIZAR_DonPeppini.bat` para mantener el sistema al dia. No es necesario cerrar el backend ni el frontend para ejecutarlo.
 
 ---
 
@@ -77,14 +76,6 @@ Cuando se publique una nueva version:
 ### Si clonaste con Git
 
 Ejecuta **`ACTUALIZAR_DonPeppini.bat`** (doble clic). Eso es todo.
-
-O manualmente:
-
-```
-git pull origin main
-cd backend && .venv\Scripts\activate && pip install -r requirements.txt && python manage.py migrate
-cd ..\frontend && npm install
-```
 
 ### Si descargaste por ZIP
 
@@ -114,24 +105,25 @@ DonPeppiniContadore/
   backend/
     manage.py
     requirements.txt
-    puc_colombia.csv          # PUC de referencia
+    puc_colombia.csv
     pyme_contable_backend/    # Configuracion Django
     contabilidad/             # Plan de cuentas, asientos, cierres
     empresas/                 # Gestion de empresas
     terceros/                 # Terceros (globales)
     facturacion/              # Facturacion
     nomina/                   # Nomina, PILA, prestaciones
-    static/logos/             # Logos del sistema
+    static/logos/
   frontend/
     src/
-      pages/                # 22+ paginas del sistema
-      components/           # Componentes reutilizables
-      services/             # Conexion al API
-      hooks/                # Hooks de React Query
+      pages/                # 22+ paginas
+      components/
+      services/
+      hooks/
+    public/logos/
     package.json
-  INSTALAR_DonPeppini.bat       # Instalador
-  INICIAR_DonPeppini.bat        # Iniciar sistema
-  ACTUALIZAR_DonPeppini.bat     # Actualizar desde GitHub
+  INSTALAR_DonPeppini.bat
+  INICIAR_DonPeppini.bat
+  ACTUALIZAR_DonPeppini.bat
   README.md
 ```
 
