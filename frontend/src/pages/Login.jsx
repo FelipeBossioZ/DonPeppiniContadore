@@ -93,7 +93,7 @@ const Login = () => {
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-slate-800">
         <div className="max-w-md w-full space-y-6 bg-white p-8 rounded-xl shadow-2xl">
           <div className="text-center">
-            <div className="flex justify-center text-6xl">🧙</div>
+            <div className="flex justify-center text-6xl">🎩</div>
             <h2 className="mt-4 text-2xl font-bold text-gray-900">Primer Acceso</h2>
             <p className="mt-1 text-sm text-gray-500">
               Cree su usuario administrador para comenzar a usar el sistema.
@@ -201,7 +201,7 @@ const Login = () => {
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-2xl">
         <div>
           <div className="flex justify-center">
-            <div className="text-6xl">🧙</div>
+            <div className="text-6xl">🎩</div>
           </div>
           <h2 className="mt-4 text-center text-3xl font-extrabold text-gray-900">
             Don Peppini
