@@ -71,14 +71,12 @@ cd /d "%SCRIPT_DIR%"
 :: Instalar dependencias Frontend
 echo [5/5] Configurando Frontend...
 cd /d "%SCRIPT_DIR%frontend"
-if not exist "node_modules" (
-    echo    Instalando dependencias Node.js (puede tardar)...
-    call npm install
-    if %errorlevel% neq 0 (
-        echo X Error instalando dependencias Node.js
-        pause
-        exit /b 1
-    )
+echo    Instalando dependencias Node.js (puede tardar)...
+call npm install
+if %errorlevel% neq 0 (
+    echo X Error instalando dependencias Node.js
+    pause
+    exit /b 1
 )
 echo    OK Frontend configurado
 
