@@ -1,0 +1,52 @@
+﻿# ==================== PYTHON ====================
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+
+# ==================== DJANGO ====================
+*.sqlite3
+*.sqlite3-journal
+backend/staticfiles/
+backend/media/
+*.log
+local_settings.py
+
+# ==================== SENSIBLE ====================
+backend/.env
+backend/.env.backup
+*.pem
+secrets.json
+
+# ==================== NODE / REACT ====================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+frontend/dist/
+frontend/.vite/
+*.local
+
+# ==================== IDE ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ==================== OS ====================
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# ==================== TEMPORAL ====================
+*.bak
+*.tmp
+*.cache/
