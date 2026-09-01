@@ -6,7 +6,7 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('contabilidad', '0006_bitacoraauditoria_huerfana'),
+        
         ('contabilidad', '0008_alter_asientocontable_unique_together_and_more'),
     ]
 
