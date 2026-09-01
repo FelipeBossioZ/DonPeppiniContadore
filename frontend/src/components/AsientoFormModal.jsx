@@ -9,7 +9,7 @@ import {
   fmtMoney, evalExpr, TIPOS_COMPROBANTE, parseApiError
 } from "../utils/contabilidad";
 
-const emptyRow = { cuenta: "", tercero_id: "", debito: 0, credito: 0 };
+const emptyRow = { cuenta: "", tercero_id: "", debito: 0, credito: 0, enlazada: false };
 
 export default function AsientoFormModal({
   open, onClose, empresaId,
@@ -24,15 +24,56 @@ export default function AsientoFormModal({
   const [openTercero, setOpenTercero] = useState(false);
   const [openCuenta, setOpenCuenta] = useState(false);
 
+  // Auto-fill fecha Jan 1 when switching to AP
+  useEffect(() => {
+    if (open && form.tipo_comprobante === "AP" && form.fecha) {
+      const y = new Date(form.fecha + "T12:00:00").getFullYear();
+      const jan1 = `${y}-01-01`;
+      if (form.fecha !== jan1) setForm(f => ({ ...f, fecha: jan1 }));
+    }
+  }, [form.tipo_comprobante]);
+
+  // Auto-fill fecha Jan 1 when switching to AP
+  useEffect(() => {
+    if (open && form.tipo_comprobante === "AP" && form.fecha) {
+      const y = new Date(form.fecha + "T12:00:00").getFullYear();
+      const jan1 = `${y}-01-01`;
+      if (form.fecha !== jan1) setForm(f => ({ ...f, fecha: jan1 }));
+    }
+  }, [form.tipo_comprobante]);
+
   // Reset form when modal opens/closes or initial data changes
   useEffect(() => {
     if (open) {
+      const sk = `asiento-draft-${empresaId}`;
+      if (!initialForm) {
+        try {
+          const saved = sessionStorage.getItem(sk);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.form && parsed.rows && parsed.rows.length >= 2) {
+              setForm(parsed.form);
+              setMovRows(parsed.rows);
+              setServerError(null);
+              setRowErrors({});
+              return;
+            }
+          }
+        } catch(e) { /* ignore */ }
+      }
       setForm(initialForm || { fecha: todayISO(), tipo_comprobante: "OT", concepto: "", tercero_id: "", descripcion_adicional: "", es_ajuste: false });
       setMovRows(initialRows && initialRows.length >= 2 ? initialRows : [{ ...emptyRow }, { ...emptyRow }]);
       setServerError(null);
       setRowErrors({});
     }
   }, [open, initialForm, initialRows]);
+
+  // Save draft to sessionStorage (not for AP)
+  useEffect(() => {
+    if (open && empresaId && form.tipo_comprobante !== "AP") {
+      try { sessionStorage.setItem(`asiento-draft-${empresaId}`, JSON.stringify({ form, rows: movRows })); } catch(e) {}
+    }
+  }, [form, movRows, open, empresaId]);
 
   // ---- Periodo label ----
   const textoPeriodo = useMemo(() => {
@@ -51,6 +92,9 @@ export default function AsientoFormModal({
   const changeRow = (i, k) => (e) => {
     const v = e.target.value;
     setServerError(null);
+    if ((k === "debito" || k === "credito") && i % 2 === 0 && movRows[i]?.enlazada) {
+      changeRowLinked(i, k, v); return;
+    }
     setMovRows(rows => rows.map((r, idx) => idx === i ? { ...r, [k]: v } : r));
     if (k === "cuenta") {
       setRowErrors(prev => {
@@ -68,9 +112,28 @@ export default function AsientoFormModal({
     return cuentas.filter(c => c.codigo?.toLowerCase().includes(s) || c.nombre?.toLowerCase().includes(s));
   };
 
-  const addRow = () => setMovRows(rows => [...rows, { ...emptyRow }]);
+  const changeRowLinked = (i, k, rawValue) => {
+    setMovRows(rows => rows.map((r, idx) => {
+      if (idx === i) return { ...r, [k]: rawValue };
+      if (idx === i + 1 && rows[i] && rows[i].enlazada) {
+        if (k === "debito") return { ...r, credito: rawValue, debito: 0 };
+        if (k === "credito") return { ...r, debito: rawValue, credito: 0 };
+      }
+      return r;
+    }));
+  };
+
+  const toggleLink = (i) => {
+    setMovRows(rows => rows.map((r, idx) => {
+      if (idx === i) return { ...r, enlazada: !r.enlazada };
+      if (idx === i + 1 && rows[i].enlazada) return { ...r, debito: 0, credito: 0 };
+      return r;
+    }));
+  };
+
+  const addRow = () => setMovRows(rows => [...rows, { ...emptyRow, enlazada: false }]);
   const delRow = (i) => {
-    setMovRows(rows => { if (rows.length <= 2) return rows; return rows.filter((_r, idx) => idx !== i); });
+    setMovRows(rows => { const minRows = form.tipo_comprobante === "AP" ? 1 : 2; if (rows.length <= minRows) return rows; return rows.filter((_r, idx) => idx !== i); });
     setRowErrors(prev => { if (!prev[i]) return prev; const next = { ...prev }; delete next[i]; return next; });
   };
 
@@ -80,7 +143,7 @@ export default function AsientoFormModal({
 
   const onSubmit = (e) => {
     e.preventDefault();
-    if (!balanceOk) { alert("El asiento no cuadra: Débitos y Créditos deben ser iguales."); return; }
+    if (form.tipo_comprobante !== "AP" && !balanceOk) { alert("El asiento no cuadra."); return; }
     if (Object.keys(rowErrors).length > 0) {
       const firstIdx = Math.min(...Object.keys(rowErrors).map(Number));
       const el = document.querySelector(`input[list="cuentas-sug-${firstIdx}"]`);
@@ -104,7 +167,7 @@ export default function AsientoFormModal({
     if (form.es_ajuste) payload.fiscal_period = 13;
 
     onCreate(payload, {
-      onSuccess: () => { onClose(); setServerError(null); },
+      onSuccess: () => { sessionStorage.removeItem(`asiento-draft-${empresaId}`); onClose(); setServerError(null); },
       onError: (err) => setServerError(parseApiError(err)),
     });
   };
@@ -127,7 +190,7 @@ export default function AsientoFormModal({
 
   return (
     <>
-      <Modal open={open} onClose={onClose} title="Nuevo asiento contable" wide
+      <Modal open={open} onClose={onClose} title={form.tipo_comprobante === "AP" ? "Asiento de Apertura" : "Nuevo asiento contable"} wide
         footer={
           <div className="flex justify-end gap-2">
             <button type="button" className="px-4 py-2 rounded border hover:bg-gray-50" onClick={onClose}>
@@ -135,7 +198,7 @@ export default function AsientoFormModal({
             </button>
             <button
               type="submit" form="asiento-form"
-              disabled={!balanceOk || isPending}
+              disabled={((form.tipo_comprobante !== "AP" && !balanceOk) || isPending)}
               className="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
             >
               {isPending ? "Creando…" : "Crear asiento"}
@@ -143,7 +206,7 @@ export default function AsientoFormModal({
           </div>
         }>
 
-        <PlantillaLoader empresaId={empresaId} onLoad={onLoadPlantilla} />
+        {form.tipo_comprobante !== "AP" && <PlantillaLoader empresaId={empresaId} onLoad={onLoadPlantilla} />}
 
         <form id="asiento-form" onSubmit={onSubmit} className="grid grid-cols-1 gap-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -160,22 +223,20 @@ export default function AsientoFormModal({
             <div>
               <label className="block text-sm mb-1">Fecha</label>
               {(() => {
-                const { min, max } = monthBoundsISO();
-                return (
+                                return (
                   <input type="date" className="border rounded px-3 py-2 w-full"
                     value={form.fecha}
-                    min={form.es_ajuste ? undefined : min}
-                    max={form.es_ajuste ? undefined : max}
+                    
                     onChange={changeHdr("fecha")} required
                   />
                 );
               })()}
-              <label className="flex items-center gap-2 mt-2 text-xs text-amber-700 cursor-pointer">
+              {form.tipo_comprobante !== "AP" && <label className="flex items-center gap-2 mt-2 text-xs text-amber-700 cursor-pointer">
                 <input type="checkbox" checked={form.es_ajuste}
                   onChange={e => setForm(f => ({ ...f, es_ajuste: e.target.checked }))}
                   className="rounded border-gray-300" />
                 📋 Ajuste fiscal (Mes 13)
-              </label>
+              </label>}
             </div>
 
             {/* Tercero principal */}
@@ -183,7 +244,7 @@ export default function AsientoFormModal({
               <label className="block text-sm mb-1">Tercero principal</label>
               <div className="flex gap-2">
                 <select className="border rounded px-3 py-2 w-full"
-                  value={form.tercero_id || ""} onChange={changeHdr("tercero_id")} required>
+                  value={form.tercero_id || ""} onChange={changeHdr("tercero_id")} required={form.tipo_comprobante !== "AP"}>
                   <option value="">Seleccione…</option>
                   {terceros.map(t => <option key={t.id} value={t.id}>{t.numero_documento} — {t.nombre}</option>)}
                 </select>
@@ -290,15 +351,31 @@ export default function AsientoFormModal({
                           value={r.debito}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setMovRows(rows => rows.map((x, idx) => idx === i ? { ...x, debito: v } : x));
+                            if (i % 2 === 0 && movRows[i]?.enlazada) {
+                              setMovRows(rows => rows.map((x, idx) => {
+                                if (idx === i) return { ...x, debito: v };
+                                if (idx === i + 1) return { ...x, credito: v, debito: 0 };
+                                return x;
+                              }));
+                            } else {
+                              setMovRows(rows => rows.map((x, idx) => idx === i ? { ...x, debito: v } : x));
+                            }
                           }}
                           onBlur={() => {
                             const v = evalExpr(r.debito);
-                            setMovRows(rows => rows.map((x, idx) =>
-                              idx === i ? { ...x, debito: v, credito: v > 0 ? 0 : x.credito } : x
+                            if (i % 2 === 0 && movRows[i]?.enlazada) {
+                              setMovRows(rows => rows.map((x, idx) => {
+                                if (idx === i) return { ...x, debito: v };
+                                if (idx === i + 1) return { ...x, credito: v, debito: 0 };
+                                return x;
+                              }));
+                            } else {
+                              setMovRows(rows => rows.map((x, idx) =>
+                                idx === i ? { ...x, debito: v, credito: v > 0 ? 0 : x.credito } : x
                             ));
+                            }
                           }}
-                          disabled={Number(r.credito) > 0}
+                          disabled={Number(r.credito) > 0 || (i % 2 === 1 && movRows[i - 1]?.enlazada)}
                         />
                       </td>
 
@@ -309,24 +386,46 @@ export default function AsientoFormModal({
                           value={r.credito}
                           onChange={(e) => {
                             const v = e.target.value;
-                            setMovRows(rows => rows.map((x, idx) => idx === i ? { ...x, credito: v } : x));
+                            if (i % 2 === 0 && movRows[i]?.enlazada) {
+                              setMovRows(rows => rows.map((x, idx) => {
+                                if (idx === i) return { ...x, credito: v };
+                                if (idx === i + 1) return { ...x, debito: v, credito: 0 };
+                                return x;
+                              }));
+                            } else {
+                              setMovRows(rows => rows.map((x, idx) => idx === i ? { ...x, credito: v } : x));
+                            }
                           }}
                           onBlur={() => {
                             const v = evalExpr(r.credito);
-                            setMovRows(rows => rows.map((x, idx) =>
-                              idx === i ? { ...x, credito: v, debito: v > 0 ? 0 : x.debito } : x
+                            if (i % 2 === 0 && movRows[i]?.enlazada) {
+                              setMovRows(rows => rows.map((x, idx) => {
+                                if (idx === i) return { ...x, credito: v };
+                                if (idx === i + 1) return { ...x, debito: v, credito: 0 };
+                                return x;
+                              }));
+                            } else {
+                              setMovRows(rows => rows.map((x, idx) =>
+                                idx === i ? { ...x, credito: v, debito: v > 0 ? 0 : x.debito } : x
                             ));
+                            }
                           }}
-                          disabled={Number(r.debito) > 0}
+                          disabled={Number(r.debito) > 0 || (i % 2 === 1 && movRows[i - 1]?.enlazada)}
                         />
                       </td>
 
                       {/* Eliminar */}
                       <td className="p-2 text-right">
                         <button type="button"
-                          className={`px-2 py-1 rounded border ${movRows.length <= 2 ? "opacity-50 cursor-not-allowed" : ""}`}
-                          onClick={() => delRow(i)} disabled={movRows.length <= 2}
-                          title={movRows.length <= 2 ? "Mínimo 2 filas para la doble partida" : "Eliminar fila"}
+                            className={`px-1 py-1 rounded border text-xs ${i % 2 === 0 ? (r.enlazada ? "bg-emerald-100 border-emerald-400 text-emerald-700" : "text-gray-400 hover:text-gray-600") : "opacity-30 cursor-not-allowed"}`}
+                            onClick={() => toggleLink(Math.floor(i / 2) * 2)}
+                            disabled={i % 2 !== 0}
+                            title={r.enlazada ? "Desenlazar par" : "Enlazar con fila siguiente (mirror)"}
+                          >↔</button>
+                        <button type="button"
+                          className={`px-2 py-1 rounded border ${(form.tipo_comprobante === "AP" ? movRows.length <= 1 : movRows.length <= 2) ? "opacity-50 cursor-not-allowed" : ""}`}
+                          onClick={() => delRow(i)} disabled={(form.tipo_comprobante === "AP" ? movRows.length <= 1 : movRows.length <= 2)}
+                          title={(form.tipo_comprobante === "AP" ? movRows.length <= 1 : movRows.length <= 2) ? "Mínimo 1 fila" : "Eliminar fila"}
                         >×</button>
                       </td>
                     </tr>
@@ -341,6 +440,21 @@ export default function AsientoFormModal({
                 </td></tr>
                 <tr className="border-t bg-gray-50">
                   <td className="p-2">
+                    {form.tipo_comprobante === "AP" && !balanceOk && movRows.length > 0 && (
+                      <button type="button" onClick={() => {
+                        const diff = totalDeb - totalCred;
+                        if (diff === 0) return;
+                        const codigo3705 = cuentaCodes.has("370505") ? "370505" : [...cuentaCodes].find(c => c.startsWith("3705")) || "";
+                        if (!codigo3705) { alert("No se encontró cuenta 3705xx en el PUC"); return; }
+                        if (diff > 0) {
+                          setMovRows(rows => [...rows, { cuenta: codigo3705, tercero_id: "", debito: 0, credito: diff }]);
+                        } else {
+                          setMovRows(rows => [...rows, { cuenta: codigo3705, tercero_id: "", debito: Math.abs(diff), credito: 0 }]);
+                        }
+                      }} className="px-3 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 text-xs mb-1" title="Lleva la diferencia a Resultado del ejercicio anterior (370505)">
+                        Cuadrar → 370505 ({fmtMoney(totalDeb - totalCred)})
+                      </button>
+                    )}
                     <button type="button" onClick={addRow} className="px-3 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700">
                       Agregar fila
                     </button>
@@ -364,11 +478,11 @@ export default function AsientoFormModal({
             </div>
           )}
 
-          <div className="col-span-full w-full">
+          {form.tipo_comprobante !== "AP" && <div className="col-span-full w-full">
             <p className="mt-2 text-xs text-indigo-800 bg-indigo-50 border border-indigo-200 rounded px-3 py-2">
               {textoPeriodo}
             </p>
-          </div>
+          </div>}
         </form>
       </Modal>
 
@@ -377,6 +491,7 @@ export default function AsientoFormModal({
         open={openTercero}
         onClose={() => setOpenTercero(false)}
         onCreated={(t) => setForm(s => ({ ...s, tercero_id: t.id }))}
+        empresaId={empresaId}
       />
       <CuentaFormModal
         open={openCuenta}

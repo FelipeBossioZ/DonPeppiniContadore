@@ -58,8 +58,11 @@ class Tercero(models.Model):
     # === ESTADO ===
     activo = models.BooleanField(default=True)
     es_autoretenedor = models.BooleanField(default=False, verbose_name="Autoretenedor")
+    regimen_simple = models.BooleanField(default=False, verbose_name="Regimen Simple de Tributacion (RST)")
     es_gran_contribuyente = models.BooleanField(default=False, verbose_name="Gran Contribuyente")
     es_declarante = models.BooleanField(default=True, verbose_name="Declarante de Renta")
+    regimen_simple = models.BooleanField(default=False, verbose_name="Régimen Simple de Tributación")
+    es_compartido = models.BooleanField(default=False, verbose_name="Compartido (todas las empresas)")
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
@@ -109,3 +112,16 @@ class Tercero(models.Model):
         verbose_name_plural = "Terceros"
         ordering = ['nombre_razon_social']
         # SIN unique_together - numero_documento ya es unique global
+
+class EmpresaTercero(models.Model):
+    """Relación many-to-many entre Empresas y Terceros (compartir tercero)."""
+    empresa = models.ForeignKey('empresas.Empresa', on_delete=models.CASCADE, related_name='terceros_rel')
+    tercero = models.ForeignKey('Tercero', on_delete=models.CASCADE, related_name='empresas_rel')
+
+    class Meta:
+        unique_together = ['empresa', 'tercero']
+        verbose_name = "Empresa-Tercero"
+        verbose_name_plural = "Empresas-Terceros"
+
+    def __str__(self):
+        return f"{self.empresa} <-> {self.tercero}"

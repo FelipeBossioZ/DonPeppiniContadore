@@ -74,12 +74,16 @@ from .views import (
     GenerarBorradoresView,
 )
 from .medios_magneticos import MediosMagneticosView
+from .views import CopiarPUCView, SaldosInicialesView, CopiarEstandarView
 
 router = DefaultRouter()
 router.register(r'cuentas', CuentaViewSet, basename='cuenta')
 router.register(r'asientos', AsientoContableViewSet, basename='asiento')
 
 urlpatterns = [
+    path("cuentas/copiar-puc/", CopiarPUCView.as_view(), name="copiar-puc"),
+    path("saldos-iniciales/", SaldosInicialesView.as_view(), name="saldos-iniciales"),
+    path("cuentas/copiar-estandar/", CopiarEstandarView.as_view(), name="copiar-estandar"),
     path('', include(router.urls)),
     
     # Reportes básicos

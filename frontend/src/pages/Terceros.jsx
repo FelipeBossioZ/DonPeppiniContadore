@@ -1,12 +1,13 @@
 // 🎩 Don Peppini Contadore - Terceros (mejorado con ubicación)
-import { useMemo, useState, useEffect } from "react";
-import { Users, Plus, Search, Edit2, Trash2, MapPin, X } from "lucide-react";
+import { useMemo, useState, useEffect, useRef } from "react";
+import { Users, Plus, Search, Edit2, Trash2, MapPin, X, Download, Upload } from "lucide-react";
 import {
   useTerceros,
   useCreateTercero,
   useUpdateTercero,
   useDeleteTercero,
 } from "../hooks/useTerceros";
+import { useEmpresa } from "../context/EmpresaContext";
 import { calcularDV } from "../utils/calcularDV";
 // Modal reutilizable
 function Modal({ open, onClose, title, children, footer }) {
@@ -92,14 +93,20 @@ const emptyForm = {
   es_autoretenedor: false,
   es_gran_contribuyente: false,
   es_declarante: true,
+  regimen_simple: false,
+  es_compartido: false,
 };
 
 export default function Terceros() {
   const [search, setSearch] = useState("");
-  const { data: terceros = [], isLoading, isError, error } = useTerceros({ search });
-  const createM = useCreateTercero({ search });
-  const updateM = useUpdateTercero({ search });
-  const deleteM = useDeleteTercero({ search });
+  const { empresaId } = useEmpresa();
+  const fileRef = useRef(null);
+  const [importResult, setImportResult] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const { data: terceros = [], isLoading, isError, error } = useTerceros({ search, empresa: empresaId });
+  const createM = useCreateTercero({ search, empresa: empresaId });
+  const updateM = useUpdateTercero({ search, empresa: empresaId });
+  const deleteM = useDeleteTercero({ search, empresa: empresaId });
 
   const [openForm, setOpenForm] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -130,6 +137,8 @@ export default function Terceros() {
         es_autoretenedor: editing.es_autoretenedor ?? false,
         es_gran_contribuyente: editing.es_gran_contribuyente ?? false,
         es_declarante: editing.es_declarante ?? true,
+        regimen_simple: editing.regimen_simple ?? false,
+        es_compartido: editing.es_compartido ?? false,
       });
     } else {
       setForm(emptyForm);
@@ -146,6 +155,50 @@ export default function Terceros() {
   }, [terceros, search]);
 
   const onNew = () => { setEditing(null); setOpenForm(true); };
+
+  const handleExport = async () => {
+    if (!empresaId) return;
+    try {
+      const { api } = await import("../services/api");
+      const response = await api.get('/terceros/exportar/', {
+        params: { empresa: empresaId },
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'terceros.xlsx';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error exportando terceros:', err);
+    }
+  };
+
+  const handleImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !empresaId) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const { api } = await import("../services/api");
+      const formData = new FormData();
+      formData.append('archivo', file);
+      formData.append('empresa', empresaId);
+      const { data } = await api.post('/terceros/importar/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportResult(data);
+    } catch (err) {
+      setImportResult({ error: err.response?.data?.error || 'Error al importar' });
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
   const onEdit = (t) => { setEditing(t); setOpenForm(true); };
   const onDelete = (t) => setConfirmDel(t);
   const change = (k) => (e) => {
@@ -190,7 +243,7 @@ export default function Terceros() {
         { onSuccess: () => setOpenForm(false) }
       );
     } else {
-      createM.mutate(payload, { onSuccess: () => setOpenForm(false) });
+      createM.mutate({ ...payload, empresa_id: empresaId }, { onSuccess: () => setOpenForm(false) });
     }
   };
 
@@ -213,10 +266,22 @@ export default function Terceros() {
             <p className="text-sm text-gray-500">Clientes, proveedores, empleados y socios</p>
           </div>
         </div>
-        <button onClick={onNew}
-          className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
-          <Plus className="h-4 w-4 mr-2" /> Nuevo tercero
-        </button>
+        <div className="flex items-center gap-2">
+          <input type="file" ref={fileRef} accept=".xlsx" className="hidden"
+            onChange={handleImport} />
+          <button onClick={() => fileRef.current?.click()} disabled={importing}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm disabled:opacity-50">
+            <Upload className="h-4 w-4 mr-2" /> {importing ? 'Importando...' : 'Importar'}
+          </button>
+          <button onClick={handleExport}
+            className="flex items-center px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm">
+            <Download className="h-4 w-4 mr-2" /> Exportar
+          </button>
+          <button onClick={onNew}
+            className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
+            <Plus className="h-4 w-4 mr-2" /> Nuevo tercero
+          </button>
+        </div>
       </div>
 
       {/* Buscador */}
@@ -228,6 +293,30 @@ export default function Terceros() {
             className="pl-10 pr-4 py-2 border rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-indigo-300 text-sm" />
         </div>
       </div>
+
+      {/* Resultado importacion */}
+      {importResult && (
+        <div className={`px-4 py-3 rounded-lg mb-4 flex items-start gap-2 ${
+          importResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+        }`}>
+          <div>
+            {importResult.error ? (
+              <p>{importResult.error}</p>
+            ) : (
+              <div className="text-sm space-y-0.5">
+                <p className="font-medium">Importacion completada: {importResult.empresa}</p>
+                <p>Nuevos: {importResult.creados} | Vinculados: {importResult.vinculados} | Omitidos: {importResult.omitidos}</p>
+                {importResult.errores?.length > 0 && (
+                  <div className="mt-1 text-red-600">
+                    {importResult.errores.map((e, i) => <p key={i} className="text-xs">{e}</p>)}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <button className="ml-auto text-sm underline" onClick={() => setImportResult(null)}>Cerrar</button>
+        </div>
+      )}
 
       {/* Tabla */}
       <div className="bg-white rounded-xl border overflow-hidden shadow-sm">
@@ -412,6 +501,16 @@ export default function Terceros() {
                 <input type="checkbox" checked={form.es_declarante}
                   onChange={(e) => setForm(f => ({ ...f, es_declarante: e.target.checked }))} />
                 <span>Declarante de Renta</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.regimen_simple}
+                  onChange={(e) => setForm(f => ({ ...f, regimen_simple: e.target.checked }))} />
+                <span>R&eacute;gimen Simple de Tributaci&oacute;n (RST)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.es_compartido}
+                  onChange={(e) => setForm(f => ({ ...f, es_compartido: e.target.checked }))} />
+                <span>Compartido (todas las empresas)</span>
               </label>
             </div>
           </div>

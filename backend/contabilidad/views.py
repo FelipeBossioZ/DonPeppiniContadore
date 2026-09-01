@@ -1041,7 +1041,7 @@ class ImportarAsientosView(views.APIView):
         col_map = {}
         for col in df.columns:
             cl = str(col).lower().strip()
-            if cl in ('n°', 'no', 'num', 'numero', 'número', '#', 'n'):
+            if cl in ('n°', 'no', 'num', 'numero', 'número', '#', 'n') or 'comprobante' in cl:
                 col_map['numero'] = col
             elif 'fecha' in cl:
                 col_map['fecha'] = col
@@ -1055,6 +1055,8 @@ class ImportarAsientosView(views.APIView):
                 col_map['centro'] = col
             elif 'concepto' in cl or 'descripcion' in cl or 'descripción' in cl or 'detalle' in cl:
                 col_map['concepto'] = col
+            elif 'nota' in cl or 'observacion' in cl or 'obs' in cl:
+                col_map['notas'] = col
             elif 'debito' in cl or 'débito' in cl or 'debe' in cl:
                 col_map['debito'] = col
             elif 'credito' in cl or 'crédito' in cl or 'haber' in cl:
@@ -1077,16 +1079,14 @@ class ImportarAsientosView(views.APIView):
             new_asiento = False
             fecha = None
             numero = None
-            
+
             if use_numero:
                 num_val = row.get(col_map.get('numero'))
                 if pd.notna(num_val):
                     num_str = str(num_val).replace('.0', '').strip()
-                    if num_str and num_str != current_key:
-                        new_asiento = True
-                        current_key = num_str
-                        numero = num_str
-            
+                else:
+                    num_str = ''
+
             fecha_val = row.get(col_map.get('fecha'))
             if pd.notna(fecha_val):
                 try:
@@ -1094,10 +1094,21 @@ class ImportarAsientosView(views.APIView):
                         fecha = fecha_val.date() if hasattr(fecha_val, 'date') else fecha_val
                     else:
                         fecha = pd.to_datetime(fecha_val).date()
-                    if not use_numero:
-                        new_asiento = True
                 except:
                     pass
+
+            # Group by comprobante + fecha (same comprobante on different dates = separate asientos)
+            fecha_str = fecha.isoformat() if fecha else ''
+            if use_numero:
+                row_key = f"{num_str}|{fecha_str}"
+                if num_str and row_key != current_key:
+                    new_asiento = True
+                    current_key = row_key
+                    numero = num_str
+            elif fecha:
+                if fecha_str != current_key:
+                    new_asiento = True
+                    current_key = fecha_str
             
             if new_asiento:
                 # Guardar asiento anterior
@@ -1106,15 +1117,41 @@ class ImportarAsientosView(views.APIView):
                     current_asiento['total_debito'] = sum(m['debito'] for m in current_movs)
                     current_asiento['total_credito'] = sum(m['credito'] for m in current_movs)
                     current_asiento['cuadra'] = abs(current_asiento['total_debito'] - current_asiento['total_credito']) < 1
+                    # Detectar tercero principal
+                    terceros_count = {}
+                    for m in current_movs:
+                        tn = m.get('tercero', '').strip()
+                        if tn:
+                            terceros_count[tn] = terceros_count.get(tn, 0) + 1
+                    if terceros_count:
+                        current_asiento['tercero_nombre'] = max(terceros_count, key=terceros_count.get)
                     asientos.append(current_asiento)
+                
+                # Parsear comprobante: "FV-0001" -> tipo="FV", numero=1
+                comp_numero = numero or ''
+                comp_tipo = 'OT'
+                comp_seq = 0
+                if '-' in comp_numero:
+                    parts = comp_numero.split('-', 1)
+                    comp_tipo = parts[0].strip()
+                    try:
+                        comp_seq = int(parts[1])
+                    except ValueError:
+                        comp_seq = 0
                 
                 concepto = str(row.get(col_map.get('concepto', ''), '')).strip()
                 if concepto == 'nan':
                     concepto = ''
+                notas_val = str(row.get(col_map.get('notas', ''), '')).strip()
+                if notas_val == 'nan':
+                    notas_val = ''
                 current_asiento = {
-                    'numero': numero or '',
+                    'numero': comp_numero,
+                    'comprobante_tipo': comp_tipo,
+                    'comprobante_seq': comp_seq,
                     'fecha': fecha.isoformat() if fecha else '',
-                    'concepto': concepto or f'Asiento {numero or ""}',
+                    'concepto': concepto or f'Asiento {comp_numero or ""}',
+                    'notas': notas_val,
                 }
                 current_movs = []
             
@@ -1128,6 +1165,43 @@ class ImportarAsientosView(views.APIView):
                 cuenta_codigo = str(cuenta_codigo).strip().replace('.0', '')
                 
                 cuenta = Cuenta.objects.filter(empresa=empresa, codigo=cuenta_codigo).first()
+                
+                # Auto-crear cuenta si no existe
+                cuenta_creada = False
+                if not cuenta:
+                    # Obtener nombre del Excel (columna Nombre Cuenta)
+                    cuenta_nombre_excel = str(row.get(col_map.get('nombre_cuenta', ''), '')).strip()
+                    if cuenta_nombre_excel == 'nan' or not cuenta_nombre_excel:
+                        cuenta_nombre_excel = f'Cuenta {cuenta_codigo}'
+                    
+                    # Naturaleza: primer dígito 1 o 5 = débito (D), 2/3/4 = crédito (C)
+                    primer_digito = cuenta_codigo[0] if cuenta_codigo else ''
+                    naturaleza = 'D' if primer_digito in ('1', '5') else 'C'
+                    
+                    # Nivel por longitud del código (heurística PUC colombiano)
+                    code_len = len(cuenta_codigo)
+                    if code_len <= 1:
+                        nivel = 1
+                    elif code_len <= 2:
+                        nivel = 2
+                    elif code_len <= 4:
+                        nivel = 3
+                    elif code_len <= 6:
+                        nivel = 4
+                    else:
+                        nivel = 5
+                    
+                    cuenta = Cuenta.objects.create(
+                        empresa=empresa,
+                        codigo=cuenta_codigo,
+                        nombre=cuenta_nombre_excel,
+                        naturaleza=naturaleza,
+                        nivel=nivel,
+                        tipo='Auxiliar',
+                        es_estandar=False,
+                        activa=True,
+                    )
+                    cuenta_creada = True
                 
                 debito = self._parse_num(row.get(col_map.get('debito', ''), 0))
                 credito = self._parse_num(row.get(col_map.get('credito', ''), 0))
@@ -1145,13 +1219,14 @@ class ImportarAsientosView(views.APIView):
                 if debito > 0 or credito > 0:
                     current_movs.append({
                         'cuenta_codigo': cuenta_codigo,
-                        'cuenta_nombre': cuenta.nombre if cuenta else '❌ NO ENCONTRADA',
-                        'cuenta_id': cuenta.id if cuenta else None,
+                        'cuenta_nombre': cuenta.nombre,
+                        'cuenta_id': cuenta.id,
                         'debito': debito,
                         'credito': credito,
                         'concepto': mov_concepto,
                         'tercero': tercero_val,
-                        'valido': cuenta is not None,
+                        'valido': True,
+                        'cuenta_creada': cuenta_creada,
                     })
         
         # Último asiento
@@ -1160,9 +1235,33 @@ class ImportarAsientosView(views.APIView):
             current_asiento['total_debito'] = sum(m['debito'] for m in current_movs)
             current_asiento['total_credito'] = sum(m['credito'] for m in current_movs)
             current_asiento['cuadra'] = abs(current_asiento['total_debito'] - current_asiento['total_credito']) < 1
+            # Detectar tercero principal del asiento (más frecuente en sus movimientos)
+            terceros_count = {}
+            for m in current_movs:
+                tn = m.get('tercero', '').strip()
+                if tn:
+                    terceros_count[tn] = terceros_count.get(tn, 0) + 1
+            if terceros_count:
+                current_asiento['tercero_nombre'] = max(terceros_count, key=terceros_count.get)
             asientos.append(current_asiento)
         
         if preview:
+            # Agregar display de comprobante a cada asiento + buscar tercero en BD
+            for a in asientos:
+                ct = a.get('comprobante_tipo', 'OT')
+                cs = a.get('comprobante_seq', 0)
+                a['comprobante_display'] = f'{ct}-{cs:04d}' if cs > 0 else f'{ct} (auto)'
+                
+                # Buscar tercero por nombre
+                t_nombre = a.get('tercero_nombre', '')
+                if t_nombre:
+                    t_obj = Tercero.objects.filter(nombre_razon_social__iexact=t_nombre).first()
+                    a['tercero_encontrado'] = t_obj is not None
+                    a['tercero_id'] = t_obj.id if t_obj else None
+                else:
+                    a['tercero_encontrado'] = False
+                    a['tercero_id'] = None
+            
             return {
                 'preview': True,
                 'empresa': empresa.razon_social,
@@ -1176,18 +1275,7 @@ class ImportarAsientosView(views.APIView):
 
     def _guardar_asientos(self, empresa, asientos_data):
         from django.db import transaction
-        
-        tercero = Tercero.objects.filter(empresa=empresa).first()
-        if not tercero:
-            tercero, _ = Tercero.objects.get_or_create(
-                empresa=empresa,
-                numero_documento='00000000',
-                defaults={
-                    'tipo_documento': 'NIT',
-                    'nombre_razon_social': 'Tercero Importación',
-                    'tipo_tercero': 'OTR',
-                }
-            )
+        from terceros.models import EmpresaTercero
         
         creados = 0
         movs_creados = 0
@@ -1201,17 +1289,62 @@ class ImportarAsientosView(views.APIView):
                     continue
                 
                 if not a.get('cuadra', False):
-                    errores.append(f"{a['fecha']}: No cuadra")
+                    ct = a.get('comprobante_tipo', 'OT')
+                    cs = a.get('comprobante_seq', 0)
+                    comp_disp = f'{ct}-{cs:04d}' if cs > 0 else f'{ct} (auto)'
+                    errores.append(f"{comp_disp} | {a['fecha']}: No cuadra")
                     continue
                 
+                # Buscar tercero por nombre (del Excel)
+                t_nombre = a.get('tercero_nombre', '')
+                tercero = None
+                if t_nombre:
+                    tercero = Tercero.objects.filter(nombre_razon_social__iexact=t_nombre).first()
+                
+                if not tercero:
+                    ct = a.get('comprobante_tipo', 'OT')
+                    cs = a.get('comprobante_seq', 0)
+                    comp_disp = f'{ct}-{cs:04d}' if cs > 0 else f'{ct} (auto)'
+                    errores.append(f"{comp_disp} | {a['fecha']}: Tercero '{t_nombre}' no encontrado en el sistema")
+                    continue
+                
+                # Vincular tercero a esta empresa si no lo está ya
+                EmpresaTercero.objects.get_or_create(empresa=empresa, tercero=tercero)
+                
                 fecha = datetime.fromisoformat(a['fecha']).date()
+                
+                # Usar comprobante del Excel si viene, o calcular siguiente consecutivo
+                comp_tipo = a.get('comprobante_tipo', 'OT')
+                comp_seq = a.get('comprobante_seq', 0)
+                
+                if comp_seq > 0:
+                    existe = AsientoContable.objects.filter(
+                        empresa=empresa,
+                        tipo_comprobante=comp_tipo,
+                        numero=comp_seq,
+                    ).exists()
+                    if existe:
+                        # Auto-number instead of skip (same comp on different dates)
+                        ultimo = AsientoContable.objects.filter(
+                            empresa=empresa, tipo_comprobante=comp_tipo
+                        ).order_by('-numero').first()
+                        comp_seq = (ultimo.numero + 1) if ultimo else 1
+                else:
+                    ultimo = AsientoContable.objects.filter(
+                        empresa=empresa, tipo_comprobante=comp_tipo
+                    ).order_by('-numero').first()
+                    comp_seq = (ultimo.numero + 1) if ultimo else 1
+
                 asiento = AsientoContable.objects.create(
                     empresa=empresa,
+                    tipo_comprobante=comp_tipo,
+                    numero=comp_seq,
                     fecha=fecha,
                     concepto=a['concepto'],
                     tercero=tercero,
                     fiscal_year=fecha.year,
                     fiscal_period=fecha.month,
+                    descripcion_adicional=a.get('notas', '') or None,
                 )
                 creados += 1
                 
@@ -7797,3 +7930,375 @@ class GenerarBorradoresView(views.APIView):
             'count': len(generados),
             'mensaje': f"Se generaron {len(generados)} borradores" if generados else "No hay borradores pendientes",
         })
+
+
+class CopiarPUCView(views.APIView):
+    """POST /api/contabilidad/cuentas/copiar-puc/  Body: {"empresa_id": int}"""
+    permission_classes = [IsAuthenticated, IsContadorOrAbove]
+
+    def post(self, request):
+        import csv as _csv, os as _os
+        from django.db import transaction
+        from empresas.models import Empresa as _Emp
+
+        empresa_id = request.data.get("empresa_id")
+        if not empresa_id:
+            return Response({"error": "empresa_id requerido"}, status=400)
+        try:
+            empresa = _Emp.objects.get(pk=empresa_id)
+        except _Emp.DoesNotExist:
+            return Response({"error": "Empresa no encontrada"}, status=404)
+
+        existentes = Cuenta.objects.filter(empresa=empresa).count()
+        if existentes > 0:
+            return Response({"error": f"Esta empresa ya tiene {existentes} cuentas."}, status=409)
+
+        csv_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "puc_colombia.csv",
+        )
+        if not _os.path.exists(csv_path):
+            return Response({"error": "puc_colombia.csv no encontrado"}, status=500)
+
+        rows = []
+        with open(csv_path, encoding="utf-8-sig") as f:
+            for r in _csv.DictReader(f):
+                rows.append(r)
+
+        tipo_map = {1: "Clase", 2: "Grupo", 4: "Cuenta", 6: "Subcuenta"}
+
+        with transaction.atomic():
+            cuentas = []
+            for r in rows:
+                codigo = r["codigo"].strip()
+                nombre = r["nombre"].strip()
+                first = codigo[0] if codigo else "1"
+                naturaleza = "C" if first in ("2", "3", "4") else "D"
+                length = len(codigo)
+                tipo = tipo_map.get(length, "Auxiliar")
+                nivel = min(length, 6)
+                cuentas.append(Cuenta(
+                    empresa=empresa, codigo=codigo, nombre=nombre,
+                    naturaleza=naturaleza, tipo=tipo, nivel=nivel,
+                ))
+
+            Cuenta.objects.bulk_create(cuentas)
+
+            cuenta_map = {c.codigo: c for c in Cuenta.objects.filter(empresa=empresa)}
+            updates = []
+            for c in cuenta_map.values():
+                if len(c.codigo) <= 1:
+                    continue
+                for end in range(len(c.codigo) - 1, 0, -1):
+                    prefix = c.codigo[:end]
+                    if prefix in cuenta_map:
+                        c.padre = cuenta_map[prefix]
+                        updates.append(c)
+                        break
+            if updates:
+                Cuenta.objects.bulk_update(updates, ["padre"], batch_size=500)
+
+        total = Cuenta.objects.filter(empresa=empresa).count()
+        return Response(
+            {"mensaje": f"PUC cargado: {total} cuentas para {empresa.razon_social}", "cuentas": total},
+            status=201,
+        )
+
+
+class SaldosInicialesView(views.APIView):
+    """
+    POST /api/contabilidad/saldos-iniciales/
+    Body: { "empresa_id": int, "anio": int, "saldos": [{ "codigo": str, "valor": number }] }
+    
+    Genera un asiento de apertura (AP) con los saldos iniciales.
+    La naturaleza (debito/credito) se infiere de la clase de la cuenta.
+    La diferencia se lleva automaticamente a la cuenta 370505 (Resultado ejercicio anterior).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from empresas.models import Empresa
+        from decimal import Decimal
+        from datetime import date
+
+        preview = request.data.get("preview", False)
+        if isinstance(preview, str):
+            preview = preview.lower() == 'true'
+
+        empresa_id = request.data.get("empresa_id")
+        anio = request.data.get("anio")
+        saldos = request.data.get("saldos", [])
+
+        if not empresa_id or not anio:
+            return Response({"error": "empresa_id y anio son requeridos"}, status=400)
+
+        try:
+            empresa = Empresa.objects.get(pk=empresa_id)
+        except Empresa.DoesNotExist:
+            return Response({"error": "Empresa no encontrada"}, status=404)
+
+        # Verificar que no exista ya un asiento de apertura para ese anio
+        if AsientoContable.objects.filter(
+            empresa=empresa, tipo_comprobante="AP", fiscal_year=int(anio)
+        ).exists():
+            return Response(
+                {"error": f"Ya existe un asiento de apertura para {anio}. Anulelo primero si desea regenerar."},
+                status=409,
+            )
+
+        anio_int = int(anio)
+
+        # Leer desde Excel si se subio archivo
+        archivo = request.FILES.get('archivo')
+        if archivo:
+            try:
+                import pandas as pd
+                df = pd.read_excel(archivo, sheet_name=0)
+            except Exception as e:
+                return Response({'error': f'Error leyendo Excel: {str(e)}'}, status=400)
+            
+            # Mapear columnas (codigo, nombre_cuenta opcional, valor)
+            col_codigo = None
+            col_valor = None
+            for col in df.columns:
+                cl = str(col).lower().strip()
+                if 'codigo' in cl or 'cod' in cl or 'cuenta' in cl:
+                    col_codigo = col
+                elif 'valor' in cl or 'saldo' in cl or 'importe' in cl or 'monto' in cl:
+                    col_valor = col
+            
+            if col_codigo is None or col_valor is None:
+                return Response({
+                    'error': 'Columnas requeridas: codigo y valor. Use la plantilla.',
+                    'columnas': list(df.columns)
+                }, status=400)
+            
+            saldos = []
+            for idx, row in df.iterrows():
+                cod = row.get(col_codigo)
+                val = row.get(col_valor)
+                if pd.isna(cod) or pd.isna(val):
+                    continue
+                cod = str(cod).strip().replace('.0', '')
+                try:
+                    val = float(str(val).replace('$','').replace(',','').strip())
+                except:
+                    continue
+                if cod and val > 0:
+                    saldos.append({'codigo': cod, 'valor': val})
+
+        # Validar saldos
+        if not saldos:
+            return Response({"error": "No se proporcionaron saldos"}, status=400)
+
+        # Buscar cuentas y crear movimientos
+        errores = []
+        total_debito = Decimal("0")
+        total_credito = Decimal("0")
+        movimientos_data = []
+
+        for i, s in enumerate(saldos):
+            codigo = str(s.get("codigo", "")).strip()
+            try:
+                valor = Decimal(str(s.get("valor", 0)))
+            except:
+                errores.append(f"Fila {i+1}: valor invalido")
+                continue
+
+            if not codigo or valor <= 0:
+                continue
+
+            cuenta = Cuenta.objects.filter(empresa=empresa, codigo=codigo).first()
+            if not cuenta:
+                # Auto-crear cuenta
+                pd = codigo[0] if codigo else ''
+                nat = 'D' if pd in ('1', '5') else 'C'
+                cl = len(codigo)
+                if cl <= 1: nv = 1
+                elif cl <= 2: nv = 2
+                elif cl <= 4: nv = 3
+                elif cl <= 6: nv = 4
+                else: nv = 5
+                cuenta = Cuenta.objects.create(
+                    empresa=empresa, codigo=codigo,
+                    nombre=f'Cuenta {codigo}',
+                    naturaleza=nat, nivel=nv,
+                    tipo='Auxiliar', es_estandar=False, activa=True,
+                )
+
+            first = codigo[0]
+            if first in ("2", "3", "4", "9"):
+                movimientos_data.append((cuenta, Decimal("0"), valor))
+                total_credito += valor
+            else:
+                movimientos_data.append((cuenta, valor, Decimal("0")))
+                total_debito += valor
+
+        if not movimientos_data:
+            return Response({"error": "No se pudieron procesar los saldos", "detalles": errores}, status=400)
+
+        # Preview mode
+        if preview:
+            pre = []
+            diff_val = total_debito - total_credito
+            for cta, d, c in movimientos_data:
+                pre.append({
+                    'codigo': cta.codigo, 'nombre': cta.nombre,
+                    'debito': float(d), 'credito': float(c),
+                })
+            if abs(diff_val) > Decimal("0.01"):
+                pre.append({
+                    'codigo': '370505',
+                    'nombre': 'Utilidad ej. anterior' if diff_val > 0 else 'Perdida ej. anterior',
+                    'debito': float(abs(diff_val)) if diff_val < 0 else 0,
+                    'credito': float(abs(diff_val)) if diff_val > 0 else 0,
+                    'es_diferencia': True,
+                })
+            return Response({
+                'preview': True, 'empresa': empresa.razon_social, 'anio': anio_int,
+                'total_cuentas': len(movimientos_data),
+                'total_debito': float(total_debito), 'total_credito': float(total_credito),
+                'diferencia': float(diff_val), 'movimientos': pre, 'errores': errores,
+            })
+
+        # Crear asiento
+        asiento = AsientoContable(
+            empresa=empresa,
+            fecha=date(anio_int, 1, 1),
+            tipo_comprobante="AP",
+            concepto=f"Saldos iniciales al 01/01/{anio_int}",
+        )
+        asiento.save()  # save() auto-genera fiscal_year, fiscal_period, numero
+
+        # Crear movimientos
+        for cuenta, debito, credito in movimientos_data:
+            MovimientoContable.objects.create(
+                asiento=asiento, cuenta=cuenta,
+                debito=debito, credito=credito,
+            )
+
+        # Ajustar diferencia a 370505 (Resultado del ejercicio anterior)
+        diff = total_debito - total_credito
+        if abs(diff) > Decimal("0.01"):
+            try:
+                cta_resultado = Cuenta.objects.get(empresa=empresa, codigo="370505")
+            except Cuenta.DoesNotExist:
+                # Buscar alguna cuenta 3705xx
+                cta_resultado = Cuenta.objects.filter(
+                    empresa=empresa, codigo__startswith="3705", activa=True
+                ).first()
+            if not cta_resultado:
+                return Response(
+                    {"error": "Cuenta de resultado del ejercicio anterior (3705xx) no encontrada en el PUC"},
+                    status=400,
+                )
+            if diff > 0:
+                # Mas debitos que creditos -> utilidad -> credito a resultado
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=cta_resultado,
+                    debito=Decimal("0"), credito=diff,
+                )
+            else:
+                # Mas creditos que debitos -> perdida -> debito a resultado
+                MovimientoContable.objects.create(
+                    asiento=asiento, cuenta=cta_resultado,
+                    debito=abs(diff), credito=Decimal("0"),
+                )
+
+        _log_auditoria(request, empresa, "saldos_iniciales",
+            f"Asiento AP-{asiento.numero:04d} para {anio_int}: {len(movimientos_data)} cuentas")
+
+        return Response({
+            "mensaje": f"Asiento de apertura AP-{asiento.numero:04d} generado correctamente",
+            "asiento_id": asiento.id,
+            "comprobante": asiento.comprobante_display,
+            "total_cuentas": len(movimientos_data),
+            "debitos": str(total_debito),
+            "creditos": str(total_credito),
+            "diferencia": str(diff),
+            "errores": errores,
+        })
+
+class CopiarEstandarView(views.APIView):
+    """POST /api/contabilidad/cuentas/copiar-estandar/
+    Body: {"source_empresa": int, "target_empresa": int}  OR  {"target_empresa": int}
+    Copies cuentas where es_estandar=True from source to target (if code doesn't exist).
+    """
+    permission_classes = [IsAuthenticated, IsContadorOrAbove]
+
+    def post(self, request):
+        from empresas.models import Empresa
+        from django.db import transaction
+
+        target_id = request.data.get("target_empresa")
+        source_id = request.data.get("source_empresa")
+
+        if not target_id:
+            return Response({"error": "target_empresa requerido"}, status=400)
+
+        try:
+            target = Empresa.objects.get(pk=target_id)
+        except Empresa.DoesNotExist:
+            return Response({"error": "Empresa destino no encontrada"}, status=404)
+
+        # Get estandar cuentas
+        if source_id:
+            try:
+                source = Empresa.objects.get(pk=source_id)
+            except Empresa.DoesNotExist:
+                return Response({"error": "Empresa origen no encontrada"}, status=404)
+            estandar_qs = Cuenta.objects.filter(empresa=source, es_estandar=True)
+        else:
+            # Copy ALL estandar from any empresa (first occurrence per code)
+            estandar_qs = Cuenta.objects.filter(es_estandar=True)
+
+        existing_codes = set(
+            Cuenta.objects.filter(empresa=target).values_list("codigo", flat=True)
+        )
+
+        to_create = []
+        for cta in estandar_qs:
+            if cta.codigo not in existing_codes:
+                to_create.append(Cuenta(
+                    empresa=target,
+                    codigo=cta.codigo,
+                    nombre=cta.nombre,
+                    naturaleza=cta.naturaleza,
+                    tipo=cta.tipo,
+                    nivel=cta.nivel,
+                    es_estandar=True,  # Keep the estandar flag in target too
+                    activa=cta.activa,
+                    cuenta_base=cta.cuenta_base,
+                ))
+                existing_codes.add(cta.codigo)
+
+        if not to_create:
+            return Response({"mensaje": "No hay cuentas estándar nuevas para copiar", "copiadas": 0})
+
+        with transaction.atomic():
+            Cuenta.objects.bulk_create(to_create)
+            # Resolve parents within the new batch
+            cuenta_map = {c.codigo: c for c in Cuenta.objects.filter(empresa=target, codigo__in=[c.codigo for c in to_create])}
+            updates = []
+            for c in cuenta_map.values():
+                if len(c.codigo) <= 1:
+                    continue
+                for end in range(len(c.codigo) - 1, 0, -1):
+                    prefix = c.codigo[:end]
+                    if prefix in cuenta_map:
+                        c.padre = cuenta_map[prefix]
+                        updates.append(c)
+                        break
+                    # Also check if parent exists from before
+                    existing_padre = Cuenta.objects.filter(empresa=target, codigo=prefix).first()
+                    if existing_padre:
+                        c.padre = existing_padre
+                        updates.append(c)
+                        break
+            if updates:
+                Cuenta.objects.bulk_update(updates, ["padre"], batch_size=500)
+
+        return Response({
+            "mensaje": f"{len(to_create)} cuentas estándar copiadas a {target.razon_social}",
+            "copiadas": len(to_create),
+        }, status=201)

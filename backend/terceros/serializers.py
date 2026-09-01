@@ -1,6 +1,6 @@
 # 🎩 Don Peppini Contadore - Serializers de Terceros (GLOBALES)
 from rest_framework import serializers
-from .models import Tercero
+from .models import Tercero, EmpresaTercero
 
 
 class TerceroListSerializer(serializers.ModelSerializer):
@@ -23,8 +23,11 @@ class TerceroListSerializer(serializers.ModelSerializer):
             'tipo_tercero',
             'activo',
             'es_autoretenedor',
+            'regimen_simple',
             'es_gran_contribuyente',
             'es_declarante',
+            'regimen_simple',
+            'es_compartido',
         ]
 
 
@@ -60,10 +63,13 @@ class TerceroDetailSerializer(serializers.ModelSerializer):
             'email',
             'activo',
             'es_autoretenedor',
+            'regimen_simple',
             'es_gran_contribuyente',
             'es_declarante',
             'fecha_creacion',
-            'fecha_actualizacion'
+            'fecha_actualizacion',
+            'regimen_simple',
+            'es_compartido',
         ]
         read_only_fields = ['id', 'fecha_creacion', 'fecha_actualizacion']
 
@@ -94,6 +100,8 @@ class TerceroCreateSerializer(serializers.ModelSerializer):
             'es_autoretenedor',
             'es_gran_contribuyente',
             'es_declarante',
+            'regimen_simple',
+            'es_compartido',
         ]
 
     def validate_numero_documento(self, value):

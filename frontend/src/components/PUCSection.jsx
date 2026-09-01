@@ -1,8 +1,10 @@
 // 🎩 Don Peppini - Sección Plan de Cuentas (PUC)
 import { useState, useMemo } from "react";
-import { BookOpen, Plus, Search, ChevronDown, ChevronUp, Pencil } from "lucide-react";
+import { BookOpen, Plus, Search, ChevronDown, ChevronUp, Pencil, Database } from "lucide-react";
+import { copiarPUC } from "../services/api";
+import { toast } from "../ui/ToastHost";
 
-export default function PUCSection({ cuentas, onNewCuenta, onEditCuenta }) {
+export default function PUCSection({ cuentas, onNewCuenta, onEditCuenta, empresaId }) {
   const [showPUC, setShowPUC] = useState(false);
   const [pucSearch, setPucSearch] = useState("");
 
@@ -26,6 +28,24 @@ export default function PUCSection({ cuentas, onNewCuenta, onEditCuenta }) {
         </span>
         {showPUC ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
       </button>
+            {/* Compartir cuentas estándar a otra empresa */}
+            <button
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-600 text-emerald-700 text-sm font-medium hover:bg-emerald-50 disabled:opacity-50"
+              disabled={!empresaId}
+              onClick={async () => {
+                const target = prompt("Copiar cuentas estándar.\n\nDigite el ID de la empresa destino (vac\u00edo = todas):");
+                if (target === null) return;
+                try {
+                  const { api } = await import("../services/api");
+                  const body = { target_empresa: target ? parseInt(target) : null };
+                  const res = await api.post('/contabilidad/cuentas/copiar-estandar/', body);
+                  toast(res.mensaje || `Cuentas copiadas: ${res.cuentas_copiadas}`);
+                  refetch();
+                } catch (err) {
+                  toast("Error al copiar cuentas estándar", "error");
+                }
+              }}
+            >{/* icon */}📤 Copiar estándar</button>
 
       {showPUC && (
         <div className="px-4 pb-4">
@@ -46,6 +66,26 @@ export default function PUCSection({ cuentas, onNewCuenta, onEditCuenta }) {
               <Plus className="h-4 w-4" />
               Nueva Cuenta
             </button>
+            {cuentas.length === 0 && empresaId && (
+              <button
+                onClick={async () => {
+                  if (!confirm("¿Cargar el PUC estándar colombiano para esta empresa?")) return;
+                  try {
+                    const res = await copiarPUC(empresaId);
+                    toast(res.mensaje || `PUC cargado: ${res.cuentas} cuentas`);
+                    setTimeout(() => window.location.reload(), 500);
+                  } catch (err) {
+                    toast(err?.response?.data?.error || "Error al cargar PUC", "error");
+                  }
+                }}
+                className="flex items-center gap-1 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm"
+              >
+                <Database className="h-4 w-4" />
+                Cargar PUC estándar
+              </button>
+
+            
+            )}
           </div>
 
           <div className="overflow-x-auto max-h-96 overflow-y-auto">

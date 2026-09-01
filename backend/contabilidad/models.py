@@ -62,7 +62,7 @@ class Cuenta(models.Model):
     naturaleza = models.CharField(
         max_length=1,
         choices=[('D', 'Débito'), ('C', 'Crédito')],
-        default='D',
+        blank=True, default='',
         verbose_name="Naturaleza"
     )
     tipo = models.CharField(
@@ -93,6 +93,7 @@ class Cuenta(models.Model):
     
     # Estado
     activa = models.BooleanField(default=True)
+    es_estandar = models.BooleanField(default=False, verbose_name="Estándar (copiar a todas las empresas)")
     
     def __str__(self): 
         return f"{self.codigo} - {self.nombre}"
@@ -126,6 +127,7 @@ class AsientoContable(models.Model):
         ('NC', 'Nota Crédito'),
         ('ND', 'Nota Débito'),
         ('CI', 'Comprobante de Ingreso'),
+        ('AP', 'Apertura'),
         ('OT', 'Otros'),
     ]
     tipo_comprobante = models.CharField(
@@ -142,7 +144,7 @@ class AsientoContable(models.Model):
     fiscal_period = models.PositiveSmallIntegerField(db_index=True, default=0)
     
     # === TERCERO Y CONCEPTO ===
-    tercero = models.ForeignKey(Tercero, on_delete=models.PROTECT, verbose_name="Tercero")
+    tercero = models.ForeignKey(Tercero, on_delete=models.PROTECT, null=True, blank=True, verbose_name="Tercero")
     concepto = models.CharField(max_length=500, verbose_name="Concepto")
     descripcion = models.TextField(blank=True, null=True, verbose_name="Descripción")
     descripcion_adicional = models.TextField(blank=True, null=True)

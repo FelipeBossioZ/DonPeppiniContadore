@@ -4,25 +4,37 @@ import { useCreateTercero } from "../hooks/useTerceros";
 import { calcularDV } from "../utils/calcularDV";
 import Modal from "./Modal";
 
-export default function TerceroQuickModal({ open, onClose, onCreated }) {
+export default function TerceroQuickModal({ open, onClose, onCreated, empresaId }) {
   const [form, setForm] = useState({
     tipo_documento: "CC", numero_documento: "", digito_verificacion: "",
-    nombre_razon_social: "", direccion: "", telefono: "", email: ""
+    nombre_razon_social: "", direccion: "", telefono: "", email: "",
+    es_compartido: false
   });
   const createTer = useCreateTercero({});
 
   const reset = () => setForm({
     tipo_documento: "CC", numero_documento: "", digito_verificacion: "",
-    nombre_razon_social: "", direccion: "", telefono: "", email: ""
+    nombre_razon_social: "", direccion: "", telefono: "", email: "",
+    es_compartido: false
   });
 
   return (
-    <Modal open={open} onClose={onClose} title="Nuevo tercero" footer={null}>
+    <Modal open={open} onClose={onClose} title="Nuevo tercero" footer={null} closeOnBackdrop={false}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          createTer.mutate(form, {
-            onSuccess: (t) => {
+          const payload = { ...form, empresa_id: empresaId || undefined };
+      createTer.mutate(payload, {
+            onSuccess: async (t) => {
+              // If es_compartido, link to all empresas via compartir endpoint
+              if (form.es_compartido) {
+                try {
+                  const { api } = await import("../services/api");
+                  await api.post('/terceros/compartir/', { tercero_id: t.id, todas: true });
+                } catch (err) {
+                  console.error("Error al compartir tercero:", err);
+                }
+              }
               if (onCreated) onCreated(t);
               onClose();
               reset();
@@ -84,6 +96,26 @@ export default function TerceroQuickModal({ open, onClose, onCreated }) {
             value={form.email}
             onChange={(e) => setForm(s => ({ ...s, email: e.target.value }))}
           />
+        </div>
+        <div className="md:col-span-2">
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input type="checkbox" className="rounded border-gray-300"
+              checked={form.regimen_simple || false}
+              onChange={(e) => setForm(s => ({ ...s, regimen_simple: e.target.checked }))} />
+            R&eacute;gimen Simple de Tributaci&oacute;n (RST)
+          </label>
+        </div>
+        <div className="md:col-span-2 flex gap-6 pt-2 border-t">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={form.regimen_simple}
+              onChange={(e) => setForm(s => ({ ...s, regimen_simple: e.target.checked }))} />
+            <span>Régimen Simple (RST)</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={form.es_compartido}
+              onChange={(e) => setForm(s => ({ ...s, es_compartido: e.target.checked }))} />
+            <span>Compartido (todas las empresas)</span>
+          </label>
         </div>
         <div className="md:col-span-2 flex justify-end gap-2">
           <button type="button" className="px-3 py-2 rounded border" onClick={onClose}>Cancelar</button>

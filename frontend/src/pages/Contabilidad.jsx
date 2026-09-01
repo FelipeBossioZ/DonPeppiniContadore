@@ -1,6 +1,6 @@
 // 🎩 Don Peppini - Contabilidad (orquestador)
 import { useMemo, useState } from "react";
-import { BookOpen, Plus, Search, Calendar, FileText, DollarSign } from "lucide-react";
+import { BookOpen, Plus, Search, Calendar, FileText, DollarSign, FileUp } from "lucide-react";
 import { FileSpreadsheet } from "lucide-react";
 import { useCuentas } from "../hooks/useCuentas";
 import { useAsientos, useCreateAsiento, useAnularAsiento } from "../hooks/useAsientos";
@@ -16,6 +16,7 @@ import AsientoFormModal from "../components/AsientoFormModal";
 import AsientoDetailModal from "../components/AsientoDetailModal";
 import CuentaFormModal from "../components/CuentaFormModal";
 import PUCSection from "../components/PUCSection";
+import SaldosInicialesModal from "../components/SaldosInicialesModal";
 
 // Utilidades compartidas
 import {
@@ -43,6 +44,7 @@ export default function Contabilidad() {
   const [openCorregir, setOpenCorregir] = useState(null);
   const [pins, setPins] = useState({ motivo: "", contador_pin: "", gerente_pin: "" });
   const [openImportar, setOpenImportar] = useState(false);
+  const [openSaldos, setOpenSaldos] = useState(false);
   const [openCuenta, setOpenCuenta] = useState(false);
   const [editingCuenta, setEditingCuenta] = useState(null);
 
@@ -66,6 +68,22 @@ export default function Contabilidad() {
   // ---- Handlers: asientos ----
   function openNewAsiento() {
     setFormInit(null);
+    setOpenForm(true);
+  }
+
+  function openApertura() {
+    const y = new Date().getFullYear();
+    setFormInit({
+      form: {
+        fecha: `${y}-01-01`,
+        tipo_comprobante: "AP",
+        concepto: "Saldos iniciales",
+        tercero_id: "",
+        descripcion_adicional: "",
+        es_ajuste: false,
+      },
+      rows: [{ ...emptyRow }, { ...emptyRow }],
+    });
     setOpenForm(true);
   }
 
@@ -94,7 +112,7 @@ export default function Contabilidad() {
     if (a.estado === "anulado") return false;
     const hoy = new Date();
     const fechaAsiento = new Date(a.fecha + "T12:00:00");
-    return hoy.getFullYear() === fechaAsiento.getFullYear() && hoy.getMonth() === fechaAsiento.getMonth();
+    return hoy.getFullYear() === fechaAsiento.getFullYear();
   }
 
   function onCorregirConfirm() {
@@ -150,6 +168,11 @@ export default function Contabilidad() {
             </div>
           </div>
           <div className="flex gap-2">
+            <button onClick={() => setOpenSaldos(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors">
+              <FileUp className="h-4 w-4" />
+              Saldos Iniciales
+            </button>
             <button onClick={() => setOpenImportar(true)}
               className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
               <FileSpreadsheet className="h-4 w-4" />
@@ -314,7 +337,7 @@ export default function Contabilidad() {
       </div>
 
       {/* Plan de Cuentas */}
-      <PUCSection cuentas={cuentas} onNewCuenta={openNewCuenta} onEditCuenta={openEditCuenta} />
+      <PUCSection cuentas={cuentas} onNewCuenta={openNewCuenta} onEditCuenta={openEditCuenta} empresaId={empresaId} />
 
       {/* ====== MODALES ====== */}
 
@@ -331,6 +354,7 @@ export default function Contabilidad() {
         onCreate={(payload, opts) => create.mutate(payload, { ...opts, onSuccess: () => { setOpenForm(false); opts?.onSuccess?.(); } })}
         isPending={create.isPending}
       />
+            <SaldosInicialesModal isOpen={openSaldos} onClose={() => setOpenSaldos(false)} empresaId={empresaId} onSuccess={() => {}} />
 
       {/* Detalle */}
       <AsientoDetailModal
@@ -444,6 +468,7 @@ export default function Contabilidad() {
         onClose={() => setOpenImportar(false)}
         onSuccess={() => window.location.reload()}
       />
+
     </div>
   );
 }

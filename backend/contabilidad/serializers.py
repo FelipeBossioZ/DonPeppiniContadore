@@ -27,11 +27,12 @@ class CuentaSerializer(serializers.ModelSerializer):
             "id", "codigo", "nombre", "naturaleza", "tipo",
             "nivel", "activa", "padre", "padre_codigo",
             "empresa",
+            "es_estandar",
         ]
         read_only_fields = ["id", "padre", "nivel", "tipo"]
         extra_kwargs = {
             "empresa": {"required": False},
-            "naturaleza": {"required": False},
+            "naturaleza": {"required": True},
         }
 
     def _auto_fields(self, codigo):
@@ -145,7 +146,7 @@ class CuentaSerializer(serializers.ModelSerializer):
         padre_codigo = validated_data.pop("padre_codigo", None)
         codigo = validated_data.get("codigo", "")
 
-        # Auto-determinar campos
+        # Auto-determinar campos (setdefault won't overwrite existing values like "")
         auto = self._auto_fields(codigo)
         for k, v in auto.items():
             validated_data.setdefault(k, v)

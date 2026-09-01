@@ -52,6 +52,7 @@ export async function getTerceros(filters = {}) {
   const params = {};
   if (filters.tipo) params.tipo_tercero = filters.tipo;
   if (filters.search) params.search = filters.search;
+  if (filters.empresa) params.empresa = filters.empresa;
   const { data } = await instance.get('/terceros/', { params });
   return data;
 }
@@ -444,4 +445,25 @@ export async function getLogoBlob(empresaId) {
     responseType: 'blob',
   });
   return URL.createObjectURL(data);
+}
+
+
+// ============================================================
+// CZP COPIAR PUC ESTÁNDAR
+// ============================================================
+export async function copiarPUC(empresaId) {
+  const { data } = await instance.post('/contabilidad/cuentas/copiar-puc/', {
+    empresa_id: empresaId,
+  });
+  return data;
+}
+
+
+export async function cargarSaldosIniciales(empresaId, anio, saldos) {
+  const { data } = await instance.post("/contabilidad/saldos-iniciales/", {
+    empresa_id: empresaId,
+    anio: anio,
+    saldos: saldos,
+  });
+  return data;
 }
