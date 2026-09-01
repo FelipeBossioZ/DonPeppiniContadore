@@ -2,9 +2,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth';
-import { Lock, User, AlertCircle, UserPlus, CheckCircle, Building2, Mail } from 'lucide-react';
+import { Lock, User, AlertCircle, UserPlus, CheckCircle, Mail } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
+const inputClass = 'appearance-none block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm';
+const inputClassNoIcon = 'appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm';
 
 const Login = () => {
   const [credentials, setCredentials] = useState({ username: '', password: '' });
@@ -43,51 +46,29 @@ const Login = () => {
   const handleSetup = async (e) => {
     e.preventDefault();
     setSetupError('');
-
-    if (setupData.password !== setupData.confirm) {
-      setSetupError('Las contrasenas no coinciden');
-      return;
-    }
-    if (setupData.password.length < 6) {
-      setSetupError('La contrasena debe tener al menos 6 caracteres');
-      return;
-    }
-    if (!setupData.empresa_nit || !setupData.empresa_razon) {
-      setSetupError('NIT y Razon Social son obligatorios');
-      return;
-    }
-
+    if (setupData.password !== setupData.confirm) { setSetupError('Las contrasenas no coinciden'); return; }
+    if (setupData.password.length < 6) { setSetupError('La contrasena debe tener al menos 6 caracteres'); return; }
+    if (!setupData.empresa_nit || !setupData.empresa_razon) { setSetupError('NIT y Razon Social son obligatorios'); return; }
     setLoading(true);
     try {
       const resp = await fetch(`${API_URL}/api/setup-user/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: setupData.username,
-          password: setupData.password,
-          email: setupData.email,
-          empresa_nit: setupData.empresa_nit,
-          empresa_dv: setupData.empresa_dv,
-          empresa_razon: setupData.empresa_razon,
-          empresa_nombre: setupData.empresa_nombre,
+          username: setupData.username, password: setupData.password, email: setupData.email,
+          empresa_nit: setupData.empresa_nit, empresa_dv: setupData.empresa_dv,
+          empresa_razon: setupData.empresa_razon, empresa_nombre: setupData.empresa_nombre,
         }),
       });
       const data = await resp.json();
-      if (!resp.ok) {
-        setSetupError(data.error || 'Error al crear la configuracion');
-        return;
-      }
+      if (!resp.ok) { setSetupError(data.error || 'Error al crear la configuracion'); return; }
       setSetupSuccess(true);
       await authService.login(setupData.username, setupData.password);
       setTimeout(() => navigate('/dashboard'), 1500);
-    } catch {
-      setSetupError('Error de conexion con el servidor');
-    } finally {
-      setLoading(false);
-    }
+    } catch { setSetupError('Error de conexion con el servidor'); }
+    finally { setLoading(false); }
   };
 
-  // Cargando
   if (needsSetup === null) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-slate-800">
@@ -96,10 +77,7 @@ const Login = () => {
     );
   }
 
-  const inputClass = "appearance-none block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm";
-  const inputClassNoIcon = "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm";
-
-  // Setup formulario
+  // === SETUP FORM ===
   if (needsSetup) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-slate-800 py-8">
@@ -111,21 +89,15 @@ const Login = () => {
               <p className="mt-2 text-sm text-gray-500">Redirigiendo al sistema...</p>
             </div>
           ) : (
-            <>
-              {/* Header */}
+            <div>
               <div className="bg-indigo-600 px-8 py-5 text-white">
-                <div className="flex justify-center text-5xl mb-2">
+                <div className="flex justify-center mb-2">
                   <img src="/logos/Logof1.png" alt="Logo" className="h-12 w-auto" onError={(e) => { e.target.style.display = 'none'; }} />
                 </div>
                 <h2 className="text-center text-xl font-bold">Configuracion Inicial</h2>
-                <p className="text-center text-indigo-200 text-sm mt-1">
-                  Cree su usuario y registre su empresa para comenzar
-                </p>
+                <p className="text-center text-indigo-200 text-sm mt-1">Cree su usuario y registre su empresa para comenzar</p>
               </div>
-
-              {/* Form */}
               <form onSubmit={handleSetup} className="p-8 space-y-5">
-                {/* Seccion: Usuario */}
                 <div>
                   <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Cuenta de Administrador</h3>
                   <div className="space-y-3">
@@ -148,6 +120,7 @@ const Login = () => {
                         <input type="email" className={inputClass} placeholder="felipe@ejemplo.com"
                           value={setupData.email} onChange={(e) => setSetupData({ ...setupData, email: e.target.value })} />
                       </div>
+                    </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-sm font-medium text-gray-700">Contrasena *</label>
@@ -172,10 +145,7 @@ const Login = () => {
                     </div>
                   </div>
                 </div>
-
                 <hr className="border-gray-200" />
-
-                {/* Seccion: Empresa */}
                 <div>
                   <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Datos de la Empresa</h3>
                   <div className="space-y-3">
@@ -203,8 +173,6 @@ const Login = () => {
                     </div>
                   </div>
                 </div>
-
-                {/* Error */}
                 {setupError && (
                   <div className="rounded-md bg-red-50 p-3">
                     <div className="flex">
@@ -213,68 +181,59 @@ const Login = () => {
                     </div>
                   </div>
                 )}
-
-                {/* Submit */}
                 <button type="submit" disabled={loading}
                   className="w-full flex justify-center items-center gap-2 py-2.5 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors disabled:opacity-50">
                   <UserPlus className="h-4 w-4" />
                   {loading ? 'Configurando...' : 'Crear usuario y empresa'}
                 </button>
               </form>
-            </>
+            </div>
           )}
-
-          <div className="text-center text-xs text-gray-400 pb-4 px-8">
-            Colombia - NIIF para Pymes - Grupo 2
-          </div>
+          <div className="text-center text-xs text-gray-400 pb-4 px-8">Colombia - NIIF para Pymes - Grupo 2</div>
         </div>
       </div>
     );
   }
 
-  // Login normal
+  // === LOGIN NORMAL ===
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-800 via-slate-900 to-slate-800">
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-2xl">
         <div>
           <div className="flex justify-center">
-            <div className="text-6xl">
-              <img src="/logos/Logof1.png" alt="Logo" className="h-16 w-auto" onError={(e) => { e.target.style.display = 'none'; }} />
-            </div>
+            <img src="/logos/Logof1.png" alt="Logo" className="h-16 w-auto" onError={(e) => { e.target.style.display = 'none'; }} />
           </div>
           <h2 className="mt-4 text-center text-3xl font-extrabold text-gray-900">Don Peppini</h2>
           <p className="text-center text-lg font-medium text-indigo-600">Contadore</p>
           <p className="mt-2 text-center text-sm text-gray-500">Sistema Contable NIIF para Pymes</p>
         </div>
-
         <form className="mt-8 space-y-6" onSubmit={handleLogin}>
           <div className="space-y-4">
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700">Usuario</label>
+              <label className="block text-sm font-medium text-gray-700">Usuario</label>
               <div className="mt-1 relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <User className="h-5 w-5 text-gray-400" />
                 </div>
-                <input id="username" type="text" required autoFocus
+                <input type="text" required autoFocus
                   className="appearance-none block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                   placeholder="Ingrese su usuario" value={credentials.username}
                   onChange={(e) => setCredentials({ ...credentials, username: e.target.value })} />
               </div>
             </div>
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">Contrasena</label>
+              <label className="block text-sm font-medium text-gray-700">Contrasena</label>
               <div className="mt-1 relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-gray-400" />
                 </div>
-                <input id="password" type="password" required
+                <input type="password" required
                   className="appearance-none block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                   placeholder="Ingrese su contrasena" value={credentials.password}
                   onChange={(e) => setCredentials({ ...credentials, password: e.target.value })} />
               </div>
             </div>
           </div>
-
           {error && (
             <div className="rounded-md bg-red-50 p-4">
               <div className="flex">
@@ -283,7 +242,6 @@ const Login = () => {
               </div>
             </div>
           )}
-
           <div>
             <button type="submit" disabled={loading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -296,7 +254,6 @@ const Login = () => {
             </button>
           </div>
         </form>
-
         <div className="text-center text-xs text-gray-400 mt-6">Colombia  NIIF para Pymes  Grupo 2</div>
       </div>
     </div>
