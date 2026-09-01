@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 title Don Peppini Contadore
 
@@ -9,6 +9,13 @@ echo ========================================================
 echo.
 
 set "SCRIPT_DIR=%~dp0"
+
+if not exist "%SCRIPT_DIR%backend\.venv\Scripts\activate.bat" (
+    echo X No se encontro el entorno virtual.
+    echo    Ejecuta primero: INSTALAR_DonPeppini.bat
+    pause
+    exit /b 1
+)
 
 :: Iniciar Backend en una nueva ventana
 echo Iniciando Backend (Django)...
