@@ -161,3 +161,14 @@ MIT
 
 ## Creditos
 Autor: @FelipeBossioZ
+
+
+## Sincronizacion de base de datos entre PCs
+
+- El codigo viaja por **GitHub**; los datos viajan por **OneDrive**.
+- La boveda canonica de datos se configura en `CONFIG_LOCAL.txt` (por PC, no se sube a git).
+- La ruta local de la base se configura en `backend/.env` (ver `backend/.env.example`).
+- `INICIAR_DonPeppini.bat`: antes de abrir el sistema trae la copia mas nueva de la boveda.
+- `CERRAR_DonPeppini.bat`: cierra el sistema y sube la base a la boveda con verificacion de integridad y respaldo fechado (conserva los ultimos 10).
+- Regla de oro: cierra siempre con **CERRAR** en un PC antes de usar **INICIAR** en el otro.
+- Cortes de internet o luz mientras trabajas: no afectan, todo corre local; SQLite protege la base y al abrir de nuevo se usa la copia mas nueva.

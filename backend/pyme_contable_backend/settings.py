@@ -7,9 +7,8 @@ from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 # =============================================================================
 # CONFIGURACION DON PEPPINI
@@ -81,13 +80,17 @@ TEMPLATES = [
 WSGI_APPLICATION = "pyme_contable_backend.wsgi.application"
 
 # =============================================================================
-# BASE DE DATOS (SQLite local)
+# BASE DE DATOS (SQLite - ruta parametrizada via .env; ver backend/.env.example)
+# Cada PC usa su copia local; la sincronizacion con la boveda OneDrive la
+# manejan INICIAR_DonPeppini.bat (pull) y CERRAR_DonPeppini.bat (push).
 # =============================================================================
+
+DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "db.sqlite3"))
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': DB_PATH,
     }
 }
 

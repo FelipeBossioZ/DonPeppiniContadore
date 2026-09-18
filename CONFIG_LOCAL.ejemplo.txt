@@ -1,0 +1,4 @@
+# Copia este archivo como CONFIG_LOCAL.txt (en la raiz del proyecto)
+# y ajusta la ruta de la carpeta boveda de OneDrive EN ESTA PC.
+# La letra de unidad puede ser distinta en cada PC (Z:, C:, etc.)
+BOVEDA=Z:\OneDrive\OFICINA\FELIPE\Oficina Felipe\2_CONTABILIDAD\DataBase

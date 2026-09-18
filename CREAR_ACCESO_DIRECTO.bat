@@ -1,15 +1,14 @@
 @echo off
 chcp 65001 >nul
-title Crear Acceso Directo - Don Peppini
+title Crear Accesos Directos - Don Peppini
 
 echo.
-echo Creando acceso directo en el escritorio...
+echo Creando accesos directos en el escritorio...
 echo.
 
 set "SCRIPT_DIR=%~dp0"
-set "TARGET=%SCRIPT_DIR%INICIAR_DonPeppini.bat"
 
-powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Don Peppini Contadore.lnk'); $s.TargetPath = '%TARGET%'; $s.WorkingDirectory = '%SCRIPT_DIR%'; $s.Description = 'Sistema Contable NIIF para Pymes'; $s.Save(); Write-Host 'OK Acceso directo creado en el escritorio'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $desk = [Environment]::GetFolderPath('Desktop'); $s = $ws.CreateShortcut($desk + '\Don Peppini Contadore.lnk'); $s.TargetPath = '%SCRIPT_DIR%INICIAR_DonPeppini.bat'; $s.WorkingDirectory = '%SCRIPT_DIR%'; $s.IconLocation = '%SCRIPT_DIR%donpeppini.ico'; $s.Description = 'Abrir sistema (trae la base desde OneDrive)'; $s.Save(); $c = $ws.CreateShortcut($desk + '\Don Peppini CERRAR.lnk'); $c.TargetPath = '%SCRIPT_DIR%CERRAR_DonPeppini.bat'; $c.WorkingDirectory = '%SCRIPT_DIR%'; $c.IconLocation = '%SCRIPT_DIR%donpeppini.ico'; $c.Description = 'Cerrar sistema y guardar la base en OneDrive'; $c.Save(); Write-Host 'OK Accesos directos creados: Don Peppini Contadore / Don Peppini CERRAR'"
 
 echo.
 pause

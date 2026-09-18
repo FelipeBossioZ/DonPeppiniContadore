@@ -50,3 +50,6 @@ Desktop.ini
 *.bak
 *.tmp
 *.cache/
+# ==================== SYNC BOVEDA (no subir) ====================
+CONFIG_LOCAL.txt
+backend/db_backups/
