@@ -69,6 +69,7 @@ function App() {
           <Route path="auditoria" element={<AuditoriaInterna />} />
           <Route path="cxp-cxc" element={<CxPCxC />} />
           <Route path="plantillas" element={<Plantillas />} />
+          <Route path="admin-bd" element={<AdminBD />} />
 
 
         </Route>

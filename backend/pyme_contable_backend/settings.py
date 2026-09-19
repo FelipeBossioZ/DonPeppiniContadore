@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "contabilidad",
     "facturacion",
     "nomina",
+    "dbadmin",
 ]
 
 MIDDLEWARE = [

@@ -58,6 +58,7 @@ const NAV_GROUPS = [
     children: [
       { name: 'Cierre Contable', href: '/cierre-contable' },
       { name: 'Auditoría Interna', href: '/auditoria' },
+      { name: 'Base de datos', href: '/admin-bd' },
     ],
   },
 ];

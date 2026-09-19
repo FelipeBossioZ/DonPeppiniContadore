@@ -1,4 +1,4 @@
-﻿# 🎩 Don Peppini Contadore - URLs principales
+# 🎩 Don Peppini Contadore - URLs principales
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework import permissions
@@ -10,6 +10,7 @@ from rest_framework_simplejwt.views import (
 )
 from pyme_contable_backend.permissions import get_user_role
 from pyme_contable_backend import views_setup
+from dbadmin import views as dbadmin_views
 from rest_framework.decorators import api_view, permission_classes as perm_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -56,6 +57,7 @@ urlpatterns = [
     path('api/contabilidad/', include('contabilidad.urls')), 
     path('api/facturacion/', include('facturacion.urls')),   
     path('api/nomina/', include('nomina.urls')),
+    path('api/dbadmin/', include('dbadmin.urls')),
     
     # Autenticación JWT
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
