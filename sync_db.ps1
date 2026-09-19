@@ -26,6 +26,14 @@ function Show-Alert($msg, $tipo) {
     } catch { }
 }
 
+function Ask-YesNo($msg) {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $r = [System.Windows.Forms.MessageBox]::Show($msg, 'Don Peppini Contadore', 'YesNo', 'Warning', 'Button1')
+        return ($r -eq [System.Windows.Forms.DialogResult]::Yes)
+    } catch { return $false }
+}
+
 function Read-Vault {
     if (-not (Test-Path -LiteralPath $configPath)) { return $null }
     foreach ($line in (Get-Content -LiteralPath $configPath)) {
@@ -110,6 +118,44 @@ try {
         $vaultTime = [datetime]::MinValue
         if (Test-Path -LiteralPath $vaultDb) { $vaultTime = (Get-Item -LiteralPath $vaultDb).LastWriteTime }
 
+        if (-not (Test-Path -LiteralPath $vaultDb)) {
+            # La boveda no tiene la DB principal. ¿Hay respaldos? -> ofrecer recuperacion
+            $latestBk = $null
+            if (Test-Path -LiteralPath $vaultBk) {
+                $latestBk = Get-ChildItem -LiteralPath $vaultBk -Filter '*.sqlite3' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            }
+            if ($latestBk) {
+                if ($Silencioso) {
+                    Write-Host '  AVISO: La boveda no tiene la DB principal, pero SI hay respaldos fechados.' -ForegroundColor Yellow
+                    exit 1
+                }
+                $fecha = $latestBk.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+                $recuperar = Ask-YesNo "La boveda de OneDrive NO contiene la base de datos principal,`npero SI hay respaldos de seguridad.`n`nRespaldo mas reciente: $($latestBk.Name)`nFecha del respaldo: $fecha`n`nSI  = Recuperar ese respaldo y trabajar con el (recomendado si era tu informacion)`nNO = Continuar con la copia local de esta PC`n`nSi no esperabas esto, elige SI y revisa la papelera de OneDrive despues."
+                if ($recuperar) {
+                    Step 50 'Recuperando respaldo desde la boveda...'
+                    Backup-Local 'pre_pull_' $localBk 5
+                    Copy-Item -LiteralPath $latestBk.FullName -Destination $vaultDb -Force
+                    Copy-Item -LiteralPath $latestBk.FullName -Destination $localDb -Force
+                    Sync-SuffixFiles $vaultDb $localDb
+                    Step 80 'Verificando integridad...'
+                    if ((Get-FileHash -LiteralPath $latestBk.FullName -Algorithm MD5).Hash -ne (Get-FileHash -LiteralPath $localDb -Algorithm MD5).Hash) {
+                        throw 'El respaldo recuperado no pasa la verificacion de integridad.'
+                    }
+                    Write-Progress -Activity 'Base de datos Don Peppini' -Completed
+                    Write-Host '  LISTO: Respaldo recuperado. Trabajas con la informacion recuperada.' -ForegroundColor Green
+                    Show-Alert "Respaldo RECUPERADO con exito.`n`nSe restauro: $($latestBk.Name)`n`nSe dejo como base principal en la boveda y como`ncopia local de esta PC. Ya puedes entrar al sistema." 'ok'
+                    exit 0
+                }
+                Show-Alert "Continuaras con la copia LOCAL de esta PC.`n`nLa boveda sigue sin base principal: al cerrar con CERRAR,`nesta PC subira su copia como principal.`n`nSi eso no es lo que querias, no cierres y revisa OneDrive." 'warn'
+                exit 1
+            }
+            else {
+                Write-Host '  AVISO: La boveda no tiene base de datos ni respaldos (primera instalacion?).' -ForegroundColor Yellow
+                Show-Alert "La boveda de OneDrive esta vacia: no tiene base de datos`nni respaldos.`n`nSi YA trabajabas con datos antes, NO continues:`nrevisa la papelera de OneDrive en onedrive.com.`n`nSi es una instalacion nueva desde cero, continua con confianza:`nse creara la base al aplicar migraciones." 'warn'
+                exit 1
+            }
+        }
+
         Step 30 'Comparando copia local con la boveda...'
 
         if ($vaultTime -gt $localTime) {
@@ -131,7 +177,7 @@ try {
             Step 100 'La copia local es mas nueva que la boveda.'
             Write-Host '  AVISO: La copia LOCAL es mas nueva (se conservara).' -ForegroundColor Yellow
             Write-Host '  Al terminar, usa CERRAR_DonPeppini.bat para subirla.'
-            Show-Alert "La copia LOCAL de esta PC es mas nueva que la boveda.`n`nSe trabajara con la copia local.`nAl terminar, usa CERRAR para subirla a OneDrive.`n`n(Si la otra PC guardo algo despues de tu ultimo CERRAR,`nrevisalo antes de sobreescribir.)" 'warn'
+            Show-Alert "La copia LOCAL de esta PC es mas nueva que la boveda.`n`nCopia local: $($localTime.ToString('yyyy-MM-dd HH:mm'))`nBoveda:      $($vaultTime.ToString('yyyy-MM-dd HH:mm'))`n`nSe trabajara con la copia local.`nAl terminar, usa CERRAR para subirla a OneDrive.`n`nSi esperabas datos que aun no estan aqui, otra PC`npuede no haber guardado con CERRAR todavia. Revisalo`nantes de sobreescribir." 'warn'
             exit 1
         }
         else {
