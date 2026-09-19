@@ -27,6 +27,7 @@ import ImportDIAN from './pages/ImportDIAN';
 import AuditoriaInterna from './pages/AuditoriaInterna';
 import CxPCxC from './pages/CxPCxC';
 import Plantillas from './pages/Plantillas';
+import AdminBD from './pages/AdminBD';
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children }) => {
